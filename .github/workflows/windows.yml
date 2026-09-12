@@ -1,0 +1,77 @@
+name: Windows build
+
+# Builds the Rust rewrite in `windows/` — a Windows-native port of Pulse.
+# The Swift app in `Sources/` has its own workflow (ci.yml) and is untouched.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  pull_request:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+          # The windows-rs crate compiles thousands of feature-gated FFI
+          # bindings; without a cache every push pays that cost twice (debug
+          # for tests, release for the artifact).
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: Clippy
+        run: cargo clippy --workspace
+        continue-on-error: true
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Build release
+        run: cargo build --release
+
+      # Smoke test for the status-line contract: `--json` must print a valid
+      # document and exit 0 without touching the network or the keyring.
+      - name: --json smoke test
+        shell: pwsh
+        run: |
+          $out = & ./target/release/pulse.exe --json | Out-String
+          $out | Out-File -FilePath "$env:TEMP\pulse-json.txt" -Encoding utf8
+          $json = Get-Content "$env:TEMP\pulse-json.txt" -Raw | ConvertFrom-Json
+          if (-not ($json.PSObject.Properties.Name -contains "generatedAt") -or
+              -not ($json.PSObject.Properties.Name -contains "accounts")) {
+            Write-Host $out
+            throw "--json output is not the documented shape"
+          }
+          Write-Host "smoke test OK: $($json.accounts.Count) account(s) on the rail"
+
+      - name: Upload pulse.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-windows-x64
+          path: windows/target/release/pulse.exe
+          if-no-files-found: error
