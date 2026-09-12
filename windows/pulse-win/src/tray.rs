@@ -264,12 +264,35 @@ unsafe fn show_menu(hwnd: HWND, commands: &Sender<TrayCommand>) {
         Ok(menu) => menu,
         Err(_) => return,
     };
-    let _ = AppendMenuW(menu, MF_STRING, ID_TOGGLE as usize, w!("Show panel"));
-    let _ = AppendMenuW(menu, MF_STRING, ID_REFRESH as usize, w!("Refresh all"));
-    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, windows::core::PCWSTR::null());
-    let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS as usize, w!("Settings"));
-    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, windows::core::PCWSTR::null());
-    let _ = AppendMenuW(menu, MF_STRING, ID_EXIT as usize, w!("Exit"));
+    // Each UTF-16 buffer must outlive its AppendMenuW, so they are all
+    // materialised before any menu item is appended.
+    let entries: [(u32, Option<&str>); 6] = [
+        (ID_TOGGLE, Some(pulse_core::localization::t("Show panel"))),
+        (ID_REFRESH, Some(pulse_core::localization::t("Refresh all"))),
+        (0, None),
+        (ID_SETTINGS, Some(pulse_core::localization::t("Settings"))),
+        (0, None),
+        (ID_EXIT, Some(pulse_core::localization::t("Exit"))),
+    ];
+    let buffers: Vec<Vec<u16>> = entries
+        .iter()
+        .map(|(_, text)| text.map(crate::winutil::wide).unwrap_or_default())
+        .collect();
+    for ((id, text), buffer) in entries.iter().zip(&buffers) {
+        match text {
+            Some(_) => {
+                let _ = AppendMenuW(
+                    menu,
+                    MF_STRING,
+                    *id as usize,
+                    windows::core::PCWSTR::from_raw(buffer.as_ptr()),
+                );
+            }
+            None => {
+                let _ = AppendMenuW(menu, MF_SEPARATOR, 0, windows::core::PCWSTR::null());
+            }
+        }
+    }
 
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);

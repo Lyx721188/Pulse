@@ -307,6 +307,11 @@ impl Component for SettingsApp {
     fn view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
         let nav = NavigationView::new()
             .pane_title("Pulse")
+            // Auto collapses to an icon strip whenever the XAML decides the
+            // window is narrow; a settings pane is a list of words, so the
+            // pane is pinned open.
+            .pane_display_mode(NavigationViewPaneDisplayMode::Left)
+            .open_pane_length(200.0)
             .on_selected_tag_changed(context.callback(Message::Nav))
             .slots([
                 SlotView::collection(
@@ -640,11 +645,11 @@ impl SettingsApp {
                         .text(provider.display_name())
                         .font_size(15.0)
                         .font_weight(FontWeight::SEMI_BOLD),
-                    self.muted(
+                    self.muted(&pulse_core::localization::t(
                         provider
                             .windows_gap()
                             .unwrap_or("Not available on Windows."),
-                    ),
+                    )),
                 ))
                 .into();
         }
@@ -805,9 +810,9 @@ impl SettingsApp {
                     "{} 1.1.0 (Windows)",
                     pulse_core::localization::t("Version")
                 )),
-                self.muted(
+                self.muted(&pulse_core::localization::t(
                     "No Pulse servers, no Pulse account, no telemetry. Requests go to the providers you already use and follow the Windows system proxy settings.",
-                ),
+                )),
                 Button::new()
                     .on_click(context.message(Message::OpenGitHub))
                     .content("github.com/Lyx721188/Pulse"),

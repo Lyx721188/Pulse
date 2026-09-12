@@ -693,6 +693,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "windows",
 ]
 
 [[package]]

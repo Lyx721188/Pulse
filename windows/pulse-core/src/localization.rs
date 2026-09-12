@@ -31,6 +31,23 @@ pub fn current() -> Language {
 }
 
 /// Detect from the Windows UI language, before settings are read.
+///
+/// The environment variables are the fallback: on Windows they are usually
+/// unset, and the system's display language lives in kernel32.
+#[cfg(windows)]
+pub fn detect_from_system() {
+    use windows::Win32::Globalization::GetUserDefaultUILanguage;
+    // PRIMARYLANGID: the low 10 bits; 0x04 is Chinese. This machine's
+    // answer covers zh-CN, zh-TW and every other variant.
+    let zh = unsafe { GetUserDefaultUILanguage() } & 0x3FF == 0x0004;
+    set_language(if zh {
+        Language::Chinese
+    } else {
+        Language::English
+    });
+}
+
+#[cfg(not(windows))]
 pub fn detect_from_system() {
     let zh = std::env::var("SYSTEM_LANGUAGE").is_ok_and(|v| v.to_lowercase().starts_with("zh"))
         || std::env::var("LANG").is_ok_and(|v| v.to_lowercase().starts_with("zh"));
@@ -48,6 +65,111 @@ struct Entry {
 }
 
 const TABLE: &[Entry] = &[
+    Entry { key: "Show panel", en: "Show panel", zh: "显示面板" },
+    Entry { key: "Refresh all", en: "Refresh all", zh: "全部刷新" },
+    Entry { key: "Settings", en: "Settings", zh: "设置" },
+    Entry { key: "Exit", en: "Exit", zh: "退出" },
+    Entry { key: "General", en: "General", zh: "常规" },
+    Entry { key: "Accounts", en: "Accounts", zh: "账户" },
+    Entry { key: "Notifications", en: "Notifications", zh: "通知" },
+    Entry { key: "About", en: "About", zh: "关于" },
+    Entry { key: "Panel", en: "Panel", zh: "面板" },
+    Entry { key: "Dock to", en: "Dock to", zh: "停靠位置" },
+    Entry { key: "Right", en: "Right", zh: "右侧" },
+    Entry { key: "Left", en: "Left", zh: "左侧" },
+    Entry { key: "Top", en: "Top", zh: "顶部" },
+    Entry { key: "Floating", en: "Floating", zh: "悬浮" },
+    Entry { key: "Panel size", en: "Panel size", zh: "面板大小" },
+    Entry { key: "Small", en: "Small", zh: "小" },
+    Entry { key: "Standard", en: "Standard", zh: "标准" },
+    Entry { key: "Large", en: "Large", zh: "大" },
+    Entry { key: "Ring spacing", en: "Ring spacing", zh: "环间距" },
+    Entry { key: "Tight", en: "Tight", zh: "紧凑" },
+    Entry { key: "Loose", en: "Loose", zh: "宽松" },
+    Entry { key: "Show percent labels", en: "Show percent labels", zh: "显示百分比标签" },
+    Entry { key: "Show what's left", en: "Show what's left", zh: "显示剩余量" },
+    Entry { key: "Show window clock", en: "Show window clock", zh: "显示窗口时钟" },
+    Entry { key: "Show second ring", en: "Show second ring", zh: "显示第二道环" },
+    Entry { key: "Show forecast", en: "Show forecast", zh: "显示预测" },
+    Entry { key: "Auto-collapse when idle", en: "Auto-collapse when idle", zh: "空闲时自动收起" },
+    Entry { key: "Follow the active display", en: "Follow the active display", zh: "跟随活动显示器" },
+    Entry { key: "Refresh", en: "Refresh", zh: "刷新" },
+    Entry { key: "Refresh interval", en: "Refresh interval", zh: "刷新间隔" },
+    Entry { key: "Automatic", en: "Automatic", zh: "自动" },
+    Entry { key: "30s", en: "30s", zh: "30秒" },
+    Entry { key: "1min", en: "1min", zh: "1分钟" },
+    Entry { key: "2min", en: "2min", zh: "2分钟" },
+    Entry { key: "5min", en: "5min", zh: "5分钟" },
+    Entry { key: "10min", en: "10min", zh: "10分钟" },
+    Entry { key: "30min", en: "30min", zh: "30分钟" },
+    Entry { key: "Windows", en: "Windows", zh: "Windows" },
+    Entry { key: "Launch at startup", en: "Launch at startup", zh: "开机时启动" },
+    Entry {
+        key: "Each provider reports its own figures by the route that product offers — Pulse holds no account of its own and sends nothing anywhere but to the provider you already use.",
+        en: "Each provider reports its own figures by the route that product offers — Pulse holds no account of its own and sends nothing anywhere but to the provider you already use.",
+        zh: "每个服务商都通过自家产品提供的接口上报数据——Pulse 不持有自己的账户，除了你已在使用的服务商之外不向任何地方发送请求。",
+    },
+    Entry {
+        key: "Reads the login this tool already saved on this PC.",
+        en: "Reads the login this tool already saved on this PC.",
+        zh: "读取该工具已保存在此电脑上的登录凭据。",
+    },
+    Entry { key: "Sign out", en: "Sign out", zh: "退出登录" },
+    Entry { key: "Sign in with GitHub", en: "Sign in with GitHub", zh: "使用 GitHub 登录" },
+    Entry {
+        key: "Device-code sign-in. Requests read:user only — never your repositories. The consent page names the editor whose client it borrows; this is not an official integration.",
+        en: "Device-code sign-in. Requests read:user only — never your repositories. The consent page names the editor whose client it borrows; this is not an official integration.",
+        zh: "设备码登录。仅请求 read:user 权限——绝不触及你的仓库。授权页面显示的是它所借用编辑器的客户端名称；这并非官方集成。",
+    },
+    Entry { key: "API key", en: "API key", zh: "API 密钥" },
+    Entry { key: "Paste the API key", en: "Paste the API key", zh: "粘贴 API 密钥" },
+    Entry { key: "Save", en: "Save", zh: "保存" },
+    Entry { key: "Not available on Windows.", en: "Not available on Windows.", zh: "在 Windows 上暂不可用。" },
+    Entry {
+        key: "Reads the language server Antigravity runs while it is open — the editor route has not been ported yet.",
+        en: "Reads the language server Antigravity runs while it is open — the editor route has not been ported yet.",
+        zh: "读取 Antigravity 打开时运行的语言服务——编辑器路线尚未移植。",
+    },
+    Entry {
+        key: "Reads the login Cursor stored in its own database — that store has not been ported yet.",
+        en: "Reads the login Cursor stored in its own database — that store has not been ported yet.",
+        zh: "读取 Cursor 存在自己数据库里的登录凭据——该存储尚未移植。",
+    },
+    Entry {
+        key: "Reads a browser session cookie — browser access has not been ported yet.",
+        en: "Reads a browser session cookie — browser access has not been ported yet.",
+        zh: "读取浏览器会话 Cookie——浏览器访问尚未移植。",
+    },
+    Entry {
+        key: "Reads the login Cursor saved. Enable Cursor's Grok Bot through Cursor until this route is ported.",
+        en: "Reads the login Cursor saved. Enable Cursor's Grok Bot through Cursor until this route is ported.",
+        zh: "读取 Cursor 保存的登录凭据。在此路线移植前，请通过 Cursor 启用其 Grok Bot。",
+    },
+    Entry {
+        key: "Signs Volcengine's usage API with access keys — the signer has not been ported yet.",
+        en: "Signs Volcengine's usage API with access keys — the signer has not been ported yet.",
+        zh: "使用访问密钥对火山引擎的用量 API 签名——签名器尚未移植。",
+    },
+    Entry { key: "Warn me when a limit passes", en: "Warn me when a limit passes", zh: "当限额超过以下值时提醒我" },
+    Entry { key: "when a warned window comes back", en: "when a warned window comes back", zh: "当被警告的窗口恢复时" },
+    Entry { key: "when checks keep failing", en: "when checks keep failing", zh: "当检查持续失败时" },
+    Entry {
+        key: "All notifications are off until you turn them on.",
+        en: "All notifications are off until you turn them on.",
+        zh: "在你开启之前，所有通知都保持关闭。",
+    },
+    Entry { key: "Enable notifications", en: "Enable notifications", zh: "启用通知" },
+    Entry {
+        key: "A screen-edge monitor for your AI coding allowances.",
+        en: "A screen-edge monitor for your AI coding allowances.",
+        zh: "屏幕边缘的 AI 编码额度监视器。",
+    },
+    Entry { key: "Version", en: "Version", zh: "版本" },
+    Entry {
+        key: "No Pulse servers, no Pulse account, no telemetry. Requests go to the providers you already use and follow the Windows system proxy settings.",
+        en: "No Pulse servers, no Pulse account, no telemetry. Requests go to the providers you already use and follow the Windows system proxy settings.",
+        zh: "没有 Pulse 服务器、没有 Pulse 账户、没有遥测。请求直达你已在使用的服务商，并遵循 Windows 系统代理设置。",
+    },
     Entry {
         key: "Loading…",
         en: "Loading…",
