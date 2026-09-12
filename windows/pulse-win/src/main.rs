@@ -6,15 +6,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod assets;
 mod autostart;
-mod berth;
 mod card;
 mod clipboard;
 mod d2d;
+mod flyout;
 mod geometry;
 mod panel;
 mod rings;
-mod settings_ui;
+mod settings_app;
 mod theme;
 mod tray;
 mod winutil;
@@ -22,7 +23,6 @@ mod winutil;
 use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
 };
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
 fn main() {
@@ -46,9 +46,6 @@ fn main() {
     }
 
     winutil::set_dpi_awareness();
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
     pulse_core::localization::detect_from_system();
     pulse_core::settings::initialize();
     pulse_core::secrets::install_dpapi(dpapi_protect, dpapi_unprotect);
@@ -56,8 +53,33 @@ fn main() {
     // The renderer is built before any window exists.
     let _ = d2d::global_engine();
 
-    let mut app = app::App::start();
-    app.run();
+    // Two threading worlds, on purpose. The panel and tray are classic
+    // Win32 layered windows; they live on a worker thread with their own
+    // message pump. The settings window is WinUI 3 (Windows Reactor), and
+    // its host stays on the main thread, where the composition stack is
+    // happiest — opened on request and gone when closed.
+    let (open_tx, open_rx) = std::sync::mpsc::channel::<()>();
+    let (shared_tx, shared_rx) = std::sync::mpsc::channel();
+    {
+        let open_tx = open_tx.clone();
+        std::thread::spawn(move || {
+            app::App::start(open_tx, shared_tx).run();
+        });
+    }
+
+    // `pulse --settings` opens the settings window right away — the same
+    // surface the tray menu reaches.
+    if args.iter().any(|a| a == "--settings") {
+        let _ = open_tx.send(());
+    }
+    drop(open_tx);
+
+    // Serve settings windows until the app thread goes away.
+    if let Ok(shared) = shared_rx.recv() {
+        while let Ok(()) = open_rx.recv() {
+            settings_app::serve_once(&shared);
+        }
+    }
 }
 
 /// `--json` runs under the `windows` subsystem, so stdout starts detached.

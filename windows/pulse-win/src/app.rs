@@ -12,7 +12,7 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::panel::{PanelEvent, PanelWindow, RailEntry};
-use crate::settings_ui::{SettingsAction, SettingsWindow};
+use crate::settings_app::{SettingsAction, SettingsHost};
 use crate::tray::{TrayCommand, TrayIcon};
 
 pub enum AppMsg {
@@ -26,7 +26,7 @@ pub enum AppMsg {
 pub struct App {
     panel: Box<PanelWindow>,
     tray: Box<TrayIcon>,
-    settings: Box<SettingsWindow>,
+    settings: SettingsHost,
     store: StoreHandle,
     tx: Sender<AppMsg>,
     rx: Receiver<AppMsg>,
@@ -35,7 +35,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn start() -> App {
+    /// Starts the app on the calling thread — a worker, since the main
+    /// thread belongs to the WinUI settings host. `open_settings` asks the
+    /// main thread to open the window; `shared_tx` hands back the state
+    /// that window reads.
+    pub fn start(open_settings: Sender<()>, shared_tx: std::sync::mpsc::Sender<std::sync::Arc<crate::settings_app::Shared>>) -> App {
         let (tx, rx) = channel::<AppMsg>();
 
         // The windows speak their own vocabularies; forwarder threads fold
@@ -95,8 +99,10 @@ impl App {
         let panel = PanelWindow::new(panel_tx);
         let mut tray = TrayIcon::new(tray_tx);
         tray.set_poll(poll_tx);
-        let settings = SettingsWindow::new(settings_tx);
+        let settings = SettingsHost::new(settings_tx, open_settings);
         let store = StoreHandle::start();
+
+        let _ = shared_tx.send(settings.shared());
 
         let mut app = App {
             panel,
@@ -159,8 +165,7 @@ impl App {
                             false,
                         );
                         self.store.send(Command::SettingsChanged);
-                        self.settings.rebuild_widgets();
-                        self.settings.invalidate();
+                        self.settings.refresh();
                     }
                     Err(text) => {
                         self.tray.show_balloon("Pulse", &text, true);
@@ -182,11 +187,7 @@ impl App {
                 }
             }
             TrayCommand::OpenSettings => {
-                self.settings.rebuild_widgets();
-                unsafe {
-                    let _ = ShowWindow(self.settings.hwnd, SW_SHOW);
-                    let _ = SetForegroundWindow(self.settings.hwnd);
-                }
+                self.settings.show();
             }
             TrayCommand::RefreshAll => {
                 let accounts = pulse_core::settings::with(|s| {
@@ -212,9 +213,7 @@ impl App {
                 self.mark_refreshing();
             }
             PanelEvent::OpenSettings => {
-                unsafe {
-                    let _ = ShowWindow(self.settings.hwnd, SW_SHOW);
-                }
+                self.settings.show();
             }
             PanelEvent::PositionChanged => {
                 // Nothing to do: the panel persisted its own position.
@@ -227,8 +226,7 @@ impl App {
             SettingsAction::Changed => {
                 self.panel.reload_settings();
                 self.store.send(Command::SettingsChanged);
-                self.settings.rebuild_widgets();
-                self.settings.invalidate();
+                self.settings.refresh();
             }
             SettingsAction::RefreshProvider(raw) => {
                 if let Some(provider) = Provider::from_raw(&raw) {
@@ -244,11 +242,9 @@ impl App {
             SettingsAction::SignInCopilot => self.start_device_flow(),
             SettingsAction::SignOutCopilot => {
                 self.store.send(Command::SettingsChanged);
-                self.settings.rebuild_widgets();
-                self.settings.invalidate();
+                self.settings.refresh();
             }
             SettingsAction::OpenUrl(url) => open_in_browser(&url),
-            SettingsAction::Close => self.settings.close(),
         }
     }
 
@@ -276,8 +272,7 @@ impl App {
             &pulse_core::localization::t("Device code copied. Finish signing in at github.com/login/device — the code is on your clipboard.").to_string(),
             false,
         );
-        self.settings.rebuild_widgets();
-        self.settings.invalidate();
+        self.settings.refresh();
     }
 
     fn mark_refreshing(&mut self) {
@@ -334,7 +329,7 @@ impl App {
     }
 
     fn update_settings_status(&mut self) {
-        if !unsafe { IsWindowVisible(self.settings.hwnd).as_bool() } {
+        if !self.settings.is_open() {
             return;
         }
         for (id, reading) in &self.readings {

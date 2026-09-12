@@ -40,113 +40,97 @@ impl Rgba {
     }
 }
 
-/// The panel's palette — always dark, always solid.
+/// The dock's palette. There is no painted surface any more — the window is
+/// real Mica, drawn by DWM — so the palette is only the ink that sits on it,
+/// in one dark and one light voice that match whatever the backdrop resolved
+/// to.
 pub mod panel {
-    use super::Rgba;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
-    /// The obsidian surface. Solid, not translucent: translucency reads as
-    /// "no reading" over a busy desktop, the same lesson the macOS app
-    /// learned with Liquid Glass.
-    pub const SURFACE: Rgba = Rgba::rgb(0.118, 0.118, 0.118); // #1E1E1E
-    /// A hairline where the surface meets the desktop.
-    pub const SURFACE_STROKE: Rgba = Rgba::new(1.0, 1.0, 1.0, 0.07);
-    /// The ring track: `Color.primary.opacity(0.18)` on the macOS side.
-    pub const TRACK: Rgba = Rgba::new(1.0, 1.0, 1.0, 0.18);
-    pub const TEXT_PRIMARY: Rgba = Rgba::rgb(1.0, 1.0, 1.0);
-    pub const TEXT_SECONDARY: Rgba = Rgba::new(1.0, 1.0, 1.0, 0.786);
-    pub const TEXT_TERTIARY: Rgba = Rgba::new(1.0, 1.0, 1.0, 0.544);
-    pub const TEXT_DISABLED: Rgba = Rgba::new(1.0, 1.0, 1.0, 0.36);
-    /// The detail card, one Fluent layer above the surface.
-    pub const CARD: Rgba = Rgba::rgb(0.165, 0.165, 0.165); // #2A2A2A
-    pub const CARD_STROKE: Rgba = Rgba::new(1.0, 1.0, 1.0, 0.08);
-    /// The progress-bar track on the card.
-    pub const BAR_TRACK: Rgba = Rgba::new(1.0, 1.0, 1.0, 0.17);
-}
+    use super::{system_accent, system_prefers_light, Rgba};
 
-/// The settings window's palette. Two sets, because a WinUI app follows the
-/// system's light or dark choice.
-#[derive(Debug, Clone, Copy)]
-pub struct SettingsPalette {
-    /// Window background. With Mica on, the window paints transparent and
-    /// the backdrop shows through; this is the fallback.
-    pub background: Rgba,
-    /// Card / layer fill (sidebar, list rows).
-    pub layer: Rgba,
-    pub layer_stroke: Rgba,
-    /// Control fill: text boxes, comboboxes.
-    pub control: Rgba,
-    pub control_hover: Rgba,
-    pub control_stroke: Rgba,
-    pub text: Rgba,
-    pub text_secondary: Rgba,
-    pub text_tertiary: Rgba,
-    /// Accent fill for primary buttons and toggles.
-    pub accent: Rgba,
-    pub accent_text: Rgba,
-    /// Window caption area.
-    pub caption_hover: Rgba,
-    pub caption_close_hover: Rgba,
-    pub is_dark: bool,
-}
+    /// The ink for one system appearance. Track and text follow the theme;
+    /// the accent is the system's own and is shared by both.
+    pub struct Palette {
+        /// The ring track: a hair of the theme's own ink.
+        pub track: Rgba,
+        pub text_primary: Rgba,
+        pub text_secondary: Rgba,
+        pub text_tertiary: Rgba,
+        pub text_disabled: Rgba,
+        /// The progress-bar track on the detail card.
+        pub bar_track: Rgba,
+    }
 
-impl SettingsPalette {
-    /// WinUI dark theme resources.
-    pub fn dark(accent: Rgba) -> SettingsPalette {
-        SettingsPalette {
-            background: Rgba::rgb(0.125, 0.125, 0.125), // #202020
-            layer: Rgba::rgb(0.164, 0.164, 0.164),      // #2A2A2A (layer)
-            layer_stroke: Rgba::new(1.0, 1.0, 1.0, 0.08),
-            control: Rgba::new(1.0, 1.0, 1.0, 0.0605),  // #FFFFFF0F
-            control_hover: Rgba::new(1.0, 1.0, 1.0, 0.0837),
-            control_stroke: Rgba::new(1.0, 1.0, 1.0, 0.0698),
-            text: Rgba::rgb(1.0, 1.0, 1.0),
-            text_secondary: Rgba::new(1.0, 1.0, 1.0, 0.786),
-            text_tertiary: Rgba::new(1.0, 1.0, 1.0, 0.544),
-            accent,
-            accent_text: Rgba::rgb(0.0, 0.0, 0.0),
-            caption_hover: Rgba::new(1.0, 1.0, 1.0, 0.0605),
-            caption_close_hover: Rgba::rgb(0.792, 0.157, 0.157), // #C42B1C
-            is_dark: true,
+    pub const DARK: Palette = Palette {
+        track: Rgba::new(1.0, 1.0, 1.0, 0.14),
+        text_primary: Rgba::rgb(1.0, 1.0, 1.0),
+        text_secondary: Rgba::new(1.0, 1.0, 1.0, 0.786),
+        text_tertiary: Rgba::new(1.0, 1.0, 1.0, 0.544),
+        text_disabled: Rgba::new(1.0, 1.0, 1.0, 0.36),
+        bar_track: Rgba::new(1.0, 1.0, 1.0, 0.17),
+    };
+
+    pub const LIGHT: Palette = Palette {
+        track: Rgba::new(0.0, 0.0, 0.0, 0.14),
+        text_primary: Rgba::rgb(0.1, 0.1, 0.1),
+        text_secondary: Rgba::new(0.0, 0.0, 0.0, 0.61),
+        text_tertiary: Rgba::new(0.0, 0.0, 0.0, 0.45),
+        text_disabled: Rgba::new(0.0, 0.0, 0.0, 0.36),
+        bar_track: Rgba::new(0.0, 0.0, 0.0, 0.15),
+    };
+
+    static DARK_MODE: AtomicBool = AtomicBool::new(true);
+    static ACCENT: Mutex<Option<Rgba>> = Mutex::new(None);
+
+    /// Re-reads the system appearance and accent. Called once before the
+    /// first frame and again whenever Windows announces an immersive color
+    /// set change.
+    pub fn sync_theme() {
+        DARK_MODE.store(!system_prefers_light(), Ordering::SeqCst);
+        ACCENT.lock().unwrap().replace(system_accent());
+    }
+
+    pub fn is_dark() -> bool {
+        DARK_MODE.load(Ordering::SeqCst)
+    }
+
+    /// The ink for whatever the system is currently showing.
+    pub fn palette() -> &'static Palette {
+        if DARK_MODE.load(Ordering::SeqCst) {
+            &DARK
+        } else {
+            &LIGHT
         }
     }
 
-    /// WinUI light theme resources.
-    pub fn light(accent: Rgba) -> SettingsPalette {
-        SettingsPalette {
-            background: Rgba::rgb(0.973, 0.973, 0.973), // #F8F8F8-ish
-            layer: Rgba::rgb(1.0, 1.0, 1.0),
-            layer_stroke: Rgba::new(0.0, 0.0, 0.0, 0.058),
-            control: Rgba::new(1.0, 1.0, 1.0, 0.7),
-            control_hover: Rgba::new(0.976, 0.976, 0.976, 0.5),
-            control_stroke: Rgba::new(0.0, 0.0, 0.0, 0.096),
-            text: Rgba::rgb(0.0, 0.0, 0.0),
-            text_secondary: Rgba::new(0.0, 0.0, 0.0, 0.606),
-            text_tertiary: Rgba::new(0.0, 0.0, 0.0, 0.446),
-            accent,
-            accent_text: Rgba::rgb(1.0, 1.0, 1.0),
-            caption_hover: Rgba::new(0.0, 0.0, 0.0, 0.0373),
-            caption_close_hover: Rgba::rgb(0.792, 0.157, 0.157),
-            is_dark: false,
+    /// The system accent colour — what the Win11 clock draws its ring in.
+    pub fn accent() -> Rgba {
+        let cached = ACCENT.lock().unwrap();
+        if let Some(c) = *cached {
+            c
+        } else {
+            drop(cached);
+            let c = system_accent();
+            *ACCENT.lock().unwrap() = Some(c);
+            c
         }
     }
 }
 
-/// The system accent color, the way WinUI reads it. Falls back to the
-/// Fluent default blue when the WinRT call is unavailable.
 pub fn system_accent() -> Rgba {
     use windows::UI::ViewManagement::{UIColorType, UISettings};
     let fallback = Rgba::from_hex(0x0078D4);
     let result: Result<Rgba, ()> = (|| {
-        unsafe {
-            let settings = UISettings::new().map_err(|_| ())?;
-            let color = settings.GetColorValue(UIColorType::Accent).map_err(|_| ())?;
-            Ok(Rgba::new(
-                color.R as f32 / 255.0,
-                color.G as f32 / 255.0,
-                color.B as f32 / 255.0,
-                1.0,
-            ))
-        }
+        let settings = UISettings::new().map_err(|_| ())?;
+        let color = settings.GetColorValue(UIColorType::Accent).map_err(|_| ())?;
+        Ok(Rgba::new(
+            color.R as f32 / 255.0,
+            color.G as f32 / 255.0,
+            color.B as f32 / 255.0,
+            1.0,
+        ))
     })();
     result.unwrap_or(fallback)
 }

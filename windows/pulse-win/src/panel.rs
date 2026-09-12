@@ -1,38 +1,43 @@
-//! The floating panel: a transparent, non-activating layered window that
-//! docks along a screen edge, shows one ring per account, opens a detail
-//! card on hover, collapses to a sliver when idle, and drags with edge
-//! fusion — the Windows counterpart of `FloatingPanel` + `FloatingPanelController`.
+//! The floating panel: a dock bar that hugs a screen edge with a margin of
+//! empty desktop around it — the Windows counterpart of `FloatingPanel` +
+//! `FloatingPanelController`.
 //!
-//! The window owns size, placement and input; everything drawn in it comes
-//! from the geometry module, whose numbers the window frame is computed
-//! from. Hover is driven by pointer sampling on mouse-move plus
-//! WM_MOUSELEAVE for the exit — the same enter-from-tracking,
-//! leave-from-sampling split as the macOS app.
+//! There is no painted surface in this window. It is a real Win11 material
+//! window: DWM draws Mica behind the whole frame and rounds its corners,
+//! and everything this module renders is ink on that material — one accent
+//! ring per account, its percent beneath. The detail card is a separate
+//! window (`flyout`), so its Mica is its own.
+//!
+//! Hover is driven by pointer sampling on mouse-move plus WM_MOUSELEAVE
+//! for the exit; the card follows the ring the pointer is over, and lingers
+//! briefly on the way out so a trip from ring to card does not flicker it.
 
+use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 
 use pulse_core::model::{usage_tint, AccountKey, ProviderUsage, State, UsageWindow};
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::InvalidateRect;
-use windows::Win32::UI::WindowsAndMessaging::*;
-
-use crate::berth;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
-use crate::card::{draw_card, CardData, CardFrame};
-use crate::d2d::{global_engine, LayeredCanvas, Painter, Rgba};
-use crate::geometry::{self, dock, Edge, Metrics};
+use windows::Win32::UI::WindowsAndMessaging::*;
+
+use crate::card::{body_size as card_body_size, CardData};
+use crate::d2d::{global_engine, Painter, SwapchainCanvas};
+use crate::flyout::Flyout;
+use crate::geometry::{self, dock, card, Edge, Metrics};
 use crate::rings::{draw_ring, ring_center, RingModel};
-use crate::theme::panel;
+use crate::theme::{panel as theme_panel};
 use crate::winutil;
 
-/// How long the pointer may be gone before the rail folds, when
-/// auto-collapse is on.
-const COLLAPSE_DELAY_MS: i64 = 1500;
+/// How long the card lingers after the pointer leaves the bar, so a trip
+/// from ring to card does not flicker it away.
+const CARD_LINGER_MS: i64 = 220;
 /// How close a drag must come to an edge to fuse with it, in design units.
 const FUSE_DISTANCE: f64 = 28.0;
+/// The timer hands out 30 ms frames; the springs step in the same units.
+const TICK_SECONDS: f64 = 0.03;
 
 pub enum PanelEvent {
     RefreshAccount(AccountKey),
@@ -57,12 +62,15 @@ pub struct RailEntry {
 }
 
 impl RailEntry {
-    pub fn from_reading(usage: &ProviderUsage, settings: &pulse_core::settings::AppSettings, shows_remaining: bool) -> RailEntry {
+    pub fn from_reading(
+        usage: &ProviderUsage,
+        settings: &pulse_core::settings::AppSettings,
+        shows_remaining: bool,
+    ) -> RailEntry {
         let account_id = usage.account.id();
         let pinned = settings.pinned_windows.get(&account_id).map(|s| s.as_str());
         let headline = usage.headline_window(pinned).cloned();
         let second = usage.second_window(pinned).cloned();
-        let tint = settings.tint_for(&account_id).map(|c| Rgba::rgb(c[0], c[1], c[2]));
 
         let now = pulse_core::timeutil::now_ms();
         // The clock arc and the second ring are settings; the reading only
@@ -97,16 +105,15 @@ impl RailEntry {
         let ring = RingModel {
             used_fraction: headline.as_ref().map(|w| w.used_fraction),
             has_reading: headline.is_some() || usage.credit_balance.is_some(),
-            tint,
             is_spent: usage_tint::is_spent(headline.as_ref()),
             shows_remaining,
             monogram: usage.provider().monogram().to_string(),
+            icon: Some(usage.provider().raw().to_string()),
             is_busy: false,
             is_refreshing: refreshing_shown,
-            highlight: false,
+            halo: 0.0,
             elapsed_fraction: elapsed,
             second_fraction: second.as_ref().map(|w| w.used_fraction),
-            second_is_spent: usage_tint::is_spent(second.as_ref()),
         };
 
         RailEntry {
@@ -122,18 +129,19 @@ impl RailEntry {
     }
 
     pub fn placeholder(provider: pulse_core::model::Provider) -> RailEntry {
+        let mut ring = RingModel::unavailable(provider.monogram());
+        ring.icon = Some(provider.raw().to_string());
         RailEntry {
             account: AccountKey::primary(provider),
             title: provider.display_name().to_string(),
             monogram: provider.monogram().to_string(),
-            ring: RingModel::unavailable(provider.monogram()),
+            ring,
             percent_text: String::new(),
             figure: "—".to_string(),
             headline: None,
             usage: None,
         }
-    }
-}
+    }}
 
 struct DragState {
     /// Where inside the window the grab happened, in units.
@@ -143,23 +151,45 @@ struct DragState {
 
 pub struct PanelWindow {
     pub hwnd: HWND,
-    canvas: Option<LayeredCanvas>,
+    canvas: Option<SwapchainCanvas>,
+    /// The hover card's window. Created after this window exists, because
+    /// it needs the bar's HWND to report pointer traffic to.
+    card: Option<Box<Flyout>>,
     pub entries: Vec<RailEntry>,
     m: Metrics,
     edge: Edge,
     docked: bool,
-    /// 0 = sliver, 1 = full rail, animated between.
-    openness: f64,
-    expanded: bool,
-    pointer_inside: bool,
-    leave_at: Option<i64>,
+    /// The rings' arrival spring, 0 → 1 and a little past it — the port of
+    /// the macOS app's `.spring(response: 0.32, dampingFraction: 0.86)`.
+    presence: f64,
+    presence_v: f64,
+    /// The hover halo's spring, riding the same family of curves as the
+    /// panel's selection spring on the macOS side.
+    hover_spring: f64,
+    hover_v: f64,
+    /// The arcs' springs, per account: the displayed fraction trails the
+    /// reading the way the macOS ring's arc animates
+    /// (`.spring(response: 0.5, dampingFraction: 0.85)`), so a refreshed
+    /// figure bounces to its new value instead of snapping.
+    arc_springs: HashMap<String, (f64, f64, f64, f64)>,
     hover_slot: Option<usize>,
     card_slot: Option<usize>,
+    /// The flyout's slide, in physical pixels — the port of the macOS
+    /// panel's selection spring (`.spring(response: 0.34, dampingFraction:
+    /// 0.82)`), which is what makes the card glide between rings instead
+    /// of teleporting.
+    card_x: f64,
+    card_vx: f64,
+    card_y: f64,
+    card_vy: f64,
+    card_target: Option<(i32, i32)>,
+    /// When the pointer left the bar and the card should follow it out,
+    /// unless it has moved onto the card first.
+    leave_at: Option<i64>,
     drag: Option<DragState>,
     window_units: (f64, f64),
     dpi: f64,
     events: Sender<PanelEvent>,
-    last_frame: i64,
     tracking_mouse: bool,
 }
 
@@ -177,29 +207,43 @@ impl PanelWindow {
             RegisterClassW(&wc);
         }
 
+        theme_panel::sync_theme();
+
         let mut panel = Box::new(PanelWindow {
             hwnd: HWND::default(),
             canvas: None,
+            card: None,
             entries: Vec::new(),
             m: Metrics::from_settings(&pulse_core::settings::with(|s| s.clone()), 1),
             edge: Edge::Right,
             docked: true,
-            openness: 1.0,
-            expanded: true,
-            pointer_inside: false,
-            leave_at: None,
+            presence: 0.0,
+            presence_v: 0.0,
+            hover_spring: 0.0,
+            hover_v: 0.0,
+            arc_springs: HashMap::new(),
             hover_slot: None,
             card_slot: None,
+            card_x: 0.0,
+            card_vx: 0.0,
+            card_y: 0.0,
+            card_vy: 0.0,
+            card_target: None,
+            leave_at: None,
             drag: None,
             window_units: (0.0, 0.0),
             dpi: 1.0,
             events,
-            last_frame: 0,
             tracking_mouse: false,
         });
 
-        let ex = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
-        let style = WS_POPUP;
+        // WS_CAPTION | WS_THICKFRAME stay even though the client area will
+        // swallow the whole frame: DWM only draws a system backdrop on a
+        // window it believes has a frame. `WM_NCCALCSIZE` returning 0
+        // removes the frame's client-area cost, so the window is still one
+        // borderless Mica surface — with Windows' own border and corners.
+        let ex = WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
+        let style = WS_CAPTION | WS_THICKFRAME;
         unsafe {
             let hwnd = CreateWindowExW(
                 ex,
@@ -218,16 +262,24 @@ impl PanelWindow {
             .expect("CreateWindowExW for panel");
             panel.hwnd = hwnd;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, &*panel as *const PanelWindow as isize);
+            // Mica, Windows' own corner radius, and the dark/light variant
+            // that matches the system — all DWM, none of it drawn here.
+            winutil::apply_system_backdrop(hwnd, theme_panel::is_dark());
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
+        panel.card = Some(Flyout::new(panel.hwnd));
         panel.reload_settings();
         panel
+    }
+
+    fn card_shown(&self) -> bool {
+        self.card.as_ref().map(|c| c.is_shown()).unwrap_or(false)
     }
 
     /// Recomputes everything a settings change can move: metrics, edge,
     /// dock, window size, placement.
     pub fn reload_settings(&mut self) {
-        let (scale, spacing, label_leads, side_pct, top_pct, floating, side, shows_remaining, shows_forecast) =
+        let (scale, spacing, label_leads, side_pct, top_pct, floating, side) =
             pulse_core::settings::with(|s| {
                 (
                     s.scale(),
@@ -237,11 +289,8 @@ impl PanelWindow {
                     s.top_rail_shows_percentages,
                     s.floating,
                     s.dock_side.clone(),
-                    s.shows_remaining,
-                    s.shows_forecast,
                 )
             });
-        let _ = (shows_remaining, shows_forecast);
 
         self.m = Metrics {
             scale,
@@ -253,8 +302,6 @@ impl PanelWindow {
         };
         self.edge = Edge::from_name(&side);
         self.docked = !floating;
-        self.expanded = true;
-        self.openness = 1.0;
         self.compute_window_size();
         self.place();
         self.redraw();
@@ -264,15 +311,9 @@ impl PanelWindow {
         pulse_core::settings::with(|s| s.shows_forecast)
     }
 
-    fn auto_collapse(&self) -> bool {
-        pulse_core::settings::with(|s| s.auto_collapse)
-    }
-
     fn compute_window_size(&mut self) {
         let count = self.entries.len().max(1);
-        let forecast = self.forecast_enabled();
-        let (w, h) = geometry::window_size(&self.m, count, self.edge, self.docked, forecast);
-        self.window_units = (w, h);
+        self.window_units = dock::size(&self.m, count, self.edge);
     }
 
     /// Sizes the canvas for the current monitor's DPI and resizes the
@@ -293,8 +334,8 @@ impl PanelWindow {
         if self.canvas.is_none() {
             self.dpi = dpi_scale;
             self.canvas = Some(
-                LayeredCanvas::new(self.hwnd, global_engine(), physical.0.max(1), physical.1.max(1))
-                    .expect("layered canvas"),
+                SwapchainCanvas::new(self.hwnd, global_engine(), physical.0.max(1), physical.1.max(1))
+                    .expect("panel canvas"),
             );
         } else {
             let size_changed = self
@@ -312,31 +353,36 @@ impl PanelWindow {
             }
         }
 
-        // The frame, in physical pixels. Docked: flush to the edge of the
-        // work area, rail centred. Floating: the stored ratio of the
-        // display, clamped inside it.
+        // The bar sits `EDGE_MARGIN` inside the work area on the edge it
+        // docks to — a dock, not a strip glued to the glass. Floating: the
+        // stored ratio of the display, clamped inside it with the same
+        // margin.
+        let margin = (dock::EDGE_MARGIN * dpi_scale) as i32;
         let (mut px, mut py) = match (self.docked, self.edge) {
             (true, Edge::Right) => (
-                work.right - physical.0,
+                work.right - physical.0 - margin,
                 work.top + (work.height() - physical.1) / 2,
             ),
-            (true, Edge::Left) => (work.left, work.top + (work.height() - physical.1) / 2),
+            (true, Edge::Left) => (
+                work.left + margin,
+                work.top + (work.height() - physical.1) / 2,
+            ),
             (true, Edge::Top) => (
                 work.left + (work.width() - physical.0) / 2,
-                work.top,
+                work.top + margin,
             ),
             (false, _) => {
                 let x = settings.float_x.clamp(0.0, 1.0);
                 let y = settings.float_y.clamp(0.0, 1.0);
                 (
-                    work.left + ((work.width() - physical.0) as f64 * x) as i32,
-                    work.top + ((work.height() - physical.1) as f64 * y) as i32,
+                    work.left + margin + ((work.width() - physical.0 - margin * 2) as f64 * x) as i32,
+                    work.top + margin + ((work.height() - physical.1 - margin * 2) as f64 * y) as i32,
                 )
             }
         };
         // Clamp into the work area whatever happened.
-        px = px.clamp(work.left, (work.right - physical.0).max(work.left));
-        py = py.clamp(work.top, (work.bottom - physical.1).max(work.top));
+        px = px.clamp(work.left + margin, (work.right - physical.0 - margin).max(work.left + margin));
+        py = py.clamp(work.top + margin, (work.bottom - physical.1 - margin).max(work.top + margin));
 
         unsafe {
             let _ = SetWindowPos(
@@ -355,20 +401,38 @@ impl PanelWindow {
         unsafe {
             ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
-        // Places, orders front, and places again: the first call puts the
-        // window roughly right, the second measures against what it
-        // actually got — the lesson `RailOffsetTests` pins on the macOS
-        // side.
+        // Re-summoned from the tray: the rings bounce in again, which is
+        // the arrival the launch eased through.
+        self.presence = 0.0;
+        self.presence_v = 0.0;
         self.place();
         self.redraw();
     }
 
     pub fn set_entries(&mut self, entries: Vec<RailEntry>) {
         let count_changed = entries.len() != self.entries.len();
+        // Springs survive snapshot swaps for the accounts that stay; a
+        // fresh account starts its arc at zero, so its reading lands with
+        // the arrival bounce.
+        let old = std::mem::take(&mut self.arc_springs);
+        self.arc_springs = entries
+            .iter()
+            .map(|e| {
+                let id = e.account.id();
+                let seed = old
+                    .get(&id)
+                    .copied()
+                    .unwrap_or((0.0, 0.0, 0.0, 0.0));
+                (id, seed)
+            })
+            .collect();
         self.entries = entries;
         if count_changed {
             self.compute_window_size();
             self.place();
+        }
+        if self.card_slot.map(|s| s >= self.entries.len()).unwrap_or(false) {
+            self.hide_card();
         }
         self.redraw();
     }
@@ -383,7 +447,6 @@ impl PanelWindow {
         let Some(canvas) = self.canvas.as_ref() else {
             return;
         };
-        self.last_frame = pulse_core::timeutil::now_ms();
 
         canvas.begin();
         let engine = global_engine();
@@ -398,216 +461,273 @@ impl PanelWindow {
         }
 
         let count = self.entries.len();
-        let forecast = self.forecast_enabled();
         let now_ms = pulse_core::timeutil::now_ms() as f64;
 
-        let openness = self.openness;
-        if openness > 0.001 {
-            // The berth's rect shrinks toward the docked edge as it closes;
-            // the shape's own flare and corners wind down with it, which is
-            // what makes sliver and rail one object.
-            let rail = berth::rail_frame(&self.m, count.max(1), self.edge, self.docked, self.window_units);
-            let sliver = berth::sliver_rect(&self.m, self.edge, self.window_units);
-            let t = ease(openness);
-            let rect = (
-                lerp(sliver.0 as f64, rail.0, t),
-                lerp(sliver.1 as f64, rail.1, t),
-                lerp(sliver.2 as f64, rail.2, t),
-                lerp(sliver.3 as f64, rail.3, t),
-            );
-
-            let surface = painter.brush(self.berth_color()).unwrap();
-            let stroke = painter.brush(panel::SURFACE_STROKE).unwrap();
-            if let Ok(path) = berth::berth_path(
-                engine,
-                rect.0 as f32,
-                rect.1 as f32,
-                rect.2 as f32,
-                rect.3 as f32,
-                self.edge,
-                self.docked,
-                openness,
-                &self.m,
-            ) {
-                painter.fill_geometry(&path, &surface);
-                painter.draw_geometry(&path, &stroke, 1.0, false);
-            }
-
-            // Rings fade up once the berth has opened enough to hold them.
-            let alpha = ((openness - 0.55) / 0.35).clamp(0.0, 1.0);
-            if alpha > 0.0 && count > 0 {
-                let label_shows = if self.edge.is_vertical() {
-                    self.m.side_percentages
+        // The rail is the window: Mica behind it all, ink only here.
+        let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
+        // The arrival spring drives both the fade and the ring's size, so
+        // the overshoot reads as a bounce, not as a flicker.
+        let arrive = self.presence.clamp(0.0, 1.0);
+        let ring_scale = 0.55 + 0.45 * self.presence;
+        let halo = self.hover_spring;
+        if arrive > 0.0 && count > 0 {
+            let label_shows = if self.edge.is_vertical() {
+                self.m.side_percentages
+            } else {
+                self.m.top_percentages
+            };
+            let ink = theme_panel::palette().text_primary;
+            for (index, entry) in self.entries.iter().enumerate() {
+                let mut model = entry.ring.clone();
+                model.halo = if self.hover_slot == Some(index) {
+                    halo
                 } else {
-                    self.m.top_percentages
+                    0.0
                 };
-                let ring_offset = dock::ring_offset_in_item(&self.m, self.edge.axis());
-                for (index, entry) in self.entries.iter().enumerate() {
-                    let mut model = entry.ring.clone();
-                    model.highlight = self.hover_slot == Some(index);
-                    let center = ring_center(&self.m, index, rail, self.edge, self.docked);
-                    let _ = draw_ring(&painter, center, self.m.s(dock::RING_DIAMETER), self.m.s(dock::RING_LINE_WIDTH), self.m.scale, &model, now_ms);
+                let center = ring_center(&self.m, index, rail, self.edge);
+                let _ = draw_ring(
+                    &painter,
+                    center,
+                    self.m.s(dock::RING_DIAMETER) * ring_scale,
+                    self.m.s(dock::RING_LINE_WIDTH),
+                    self.m.scale,
+                    &model,
+                    now_ms,
+                );
 
-                    if label_shows {
-                        let text = if !entry.percent_text.is_empty() {
-                            entry.percent_text.clone()
-                        } else {
-                            entry.figure.clone()
-                        };
-                        let spent = model.is_spent;
-                        let color = if spent {
-                            Rgba::from(usage_tint::EXHAUSTED)
-                        } else if entry.headline.is_none() && entry.figure == "—" {
-                            panel::TEXT_DISABLED
-                        } else {
-                            panel::TEXT_PRIMARY
-                        }
-                        .with_alpha(alpha as f32);
-                        let brush = painter.brush(color).unwrap();
-                        let text_w = self.m.s(dock::PERCENT_TEXT_WIDTH);
-                        let text_h = self.m.s(dock::PERCENT_TEXT_HEIGHT);
-                        let gap = self.m.s(dock::RING_TO_TEXT);
-                        let (tx, ty) = if self.m.label_leads {
-                            (
-                                center.X - text_w as f32 / 2.0,
-                                center.Y - (self.m.s(dock::RING_DIAMETER) / 2.0 + gap + text_h) as f32,
-                            )
-                        } else {
-                            (
-                                center.X - text_w as f32 / 2.0,
-                                center.Y + (self.m.s(dock::RING_DIAMETER) / 2.0 + gap) as f32,
-                            )
-                        };
-                        painter.text(
-                            &text,
-                            crate::d2d::rect(tx, ty, text_w as f32, text_h as f32),
-                            self.m.s(dock::PERCENT_FONT) as f32,
-                            windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_MEDIUM,
-                            &brush,
-                            1,
-                            1,
-                        );
-                    }
-                    let _ = ring_offset;
-                }
-            }
-        } else {
-            // The sliver, alone. It takes usage colour past the warning
-            // threshold: hiding the rail must not hide something worth
-            // seeing.
-            let sliver = berth::sliver_rect(&self.m, self.edge, self.window_units);
-            let surface = painter.brush(self.berth_color()).unwrap();
-            let stroke = painter.brush(panel::SURFACE_STROKE).unwrap();
-            if let Ok(path) = berth::berth_path(
-                engine,
-                sliver.0,
-                sliver.1,
-                sliver.2,
-                sliver.3,
-                self.edge,
-                self.docked,
-                0.0,
-                &self.m,
-            ) {
-                painter.fill_geometry(&path, &surface);
-                painter.draw_geometry(&path, &stroke, 1.0, false);
-            }
-        }
-
-        // The card, when a ring is pointed at. The window does not resize
-        // for it — the card is an overlay, not a stack sibling.
-        if let Some(slot) = self.card_slot {
-            if let Some(entry) = self.entries.get(slot) {
-                if let Some(usage) = &entry.usage {
-                    let rail = berth::rail_frame(&self.m, count.max(1), self.edge, self.docked, self.window_units);
-                    let ring_along = dock::ring_centre_along(&self.m, slot, self.edge.axis(), self.docked);
-                    let footnote = matches!(usage.state, State::Stale);
-                    let frame = CardFrame::for_ring(
-                        &self.m,
-                        self.edge,
-                        self.window_units,
-                        rail,
-                        ring_along,
-                        usage.windows.len().max(1),
-                        footnote,
-                        forecast,
-                    );
-                    let data = CardData {
-                        usage: usage.clone(),
-                        title: entry.title.clone(),
-                        monogram: entry.monogram.clone(),
-                        shows_remaining: pulse_core::settings::with(|s| s.shows_remaining),
-                        shows_forecast: forecast,
+                if label_shows {
+                    let text = if !entry.percent_text.is_empty() {
+                        entry.percent_text.clone()
+                    } else {
+                        entry.figure.clone()
                     };
-                    let _ = draw_card(&painter, &self.m, &frame, &data);
+                    let color = if entry.headline.is_none() && entry.figure == "—" {
+                        theme_panel::palette().text_disabled
+                    } else {
+                        ink
+                    }
+                    .with_alpha((arrive) as f32);
+                    let brush = painter.brush(color).unwrap();
+                    let text_w = self.m.s(dock::PERCENT_TEXT_WIDTH);
+                    let text_h = self.m.s(dock::PERCENT_TEXT_HEIGHT);
+                    let gap = self.m.s(dock::RING_TO_TEXT);
+                    let (tx, ty) = if self.m.label_leads {
+                        (
+                            center.X - text_w as f32 / 2.0,
+                            center.Y - (self.m.s(dock::RING_DIAMETER) / 2.0 + gap + text_h) as f32,
+                        )
+                    } else {
+                        (
+                            center.X - text_w as f32 / 2.0,
+                            center.Y + (self.m.s(dock::RING_DIAMETER) / 2.0 + gap) as f32,
+                        )
+                    };
+                    painter.text(
+                        &text,
+                        crate::d2d::rect(tx, ty, text_w as f32, text_h as f32),
+                        self.m.s(dock::PERCENT_FONT) as f32,
+                        windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_MEDIUM,
+                        &brush,
+                        1,
+                        1,
+                    );
                 }
             }
         }
 
         canvas.present();
-    }
 
-    /// The berth's fill: obsidian, or the warning colour on the collapsed
-    /// sliver when a limit is close.
-    fn berth_color(&self) -> Rgba {
-        if self.openness < 0.5 || !self.expanded {
-            if self.docked {
-                if let Some(color) = self.alert_color() {
-                    return color;
+        // Keep the flyout's content in step: a refresh finishing while the
+        // card is open re-draws it from the new snapshot.
+        if self.card_shown() {
+            if let Some(slot) = self.card_slot {
+                if let Some((data, _)) = self.card_payload(slot) {
+                    if let Some(flyout) = self.card.as_mut() {
+                        flyout.draw(&data, &self.m);
+                    }
                 }
             }
         }
-        panel::SURFACE
     }
 
-    fn alert_color(&self) -> Option<Rgba> {
-        let threshold = pulse_core::settings::with(|s| s.alert_threshold as f64 / 100.0);
-        self.entries.iter().filter_map(|e| e.headline.as_ref()).find_map(|w| {
-            if w.is_exhausted || w.used_fraction >= 1.0 {
-                Some(Rgba::from(usage_tint::EXHAUSTED))
-            } else if w.used_fraction >= threshold {
-                Some(Rgba::from(usage_tint::WARNING))
-            } else {
-                None
-            }
-        })
+    /// What the card for `slot` draws and how big it is.
+    fn card_payload(&self, slot: usize) -> Option<(CardData, (f64, f64))> {
+        let entry = self.entries.get(slot)?;
+        let usage = entry.usage.as_ref()?;
+        let forecast = self.forecast_enabled();
+        let footnote = matches!(usage.state, State::Stale);
+        let data = CardData {
+            usage: usage.clone(),
+            title: entry.title.clone(),
+            monogram: entry.monogram.clone(),
+            icon: Some(usage.provider().raw().to_string()),
+            shows_remaining: pulse_core::settings::with(|s| s.shows_remaining),
+            shows_forecast: forecast,
+        };
+        Some((
+            data,
+            card_body_size(&self.m, usage.windows.len().max(1), footnote, forecast),
+        ))
     }
 
-    /// The animation tick: eases openness, refreshes marks, and collapses
-    /// on schedule. Returns true while something still moves, so the app
-    /// knows to keep the timer alive.
+    /// Puts the card beside the ring it points at — on the desktop side of
+    /// the bar, vertically centred on the ring, clamped into the monitor.
+    /// First appearance snaps; a move between rings slides on the spring.
+    fn place_card(&mut self) {
+        let Some(slot) = self.card_slot else {
+            self.hide_card();
+            return;
+        };
+        let Some((data, (cw, ch))) = self.card_payload(slot) else {
+            self.hide_card();
+            return;
+        };
+
+        let mut rect = RECT::default();
+        unsafe {
+            let _ = GetWindowRect(self.hwnd, &mut rect);
+        }
+        let (_, work) = winutil::monitor_work_at(
+            (rect.left + rect.right) / 2,
+            (rect.top + rect.bottom) / 2,
+        );
+        let dpi = self.dpi;
+        let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
+        let center = ring_center(&self.m, slot, rail, self.edge);
+        let ring_x = rect.left as f64 + center.X as f64 * dpi;
+        let ring_y = rect.top as f64 + center.Y as f64 * dpi;
+        let gap = self.m.s(card::HORIZONTAL_GAP) * dpi;
+        let w = cw * dpi;
+        let h = ch * dpi;
+
+        let (mut tx, mut ty) = match self.edge {
+            Edge::Right => (rect.left as f64 - gap - w, ring_y - h / 2.0),
+            Edge::Left => (rect.right as f64 + gap, ring_y - h / 2.0),
+            Edge::Top => (ring_x - w / 2.0, rect.bottom as f64 + gap),
+        };
+        tx = tx.clamp(work.left as f64, (work.right as f64 - w).max(work.left as f64));
+        ty = ty.clamp(work.top as f64, (work.bottom as f64 - h).max(work.top as f64));
+
+        if self.card_shown() {
+            // A move between rings: hand the destination to the spring and
+            // resize in place at wherever the slide has reached.
+            self.card_target = Some((tx as i32, ty as i32));
+            let flyout = self.card.as_mut().expect("panel flyout");
+            flyout.show_at(self.card_x as i32, self.card_y as i32, (cw, ch), dpi);
+        } else {
+            // First appearance lands on the ring, at rest.
+            self.card_x = tx;
+            self.card_y = ty;
+            self.card_vx = 0.0;
+            self.card_vy = 0.0;
+            self.card_target = Some((tx as i32, ty as i32));
+            let flyout = self.card.as_mut().expect("panel flyout");
+            flyout.show_at(tx as i32, ty as i32, (cw, ch), dpi);
+        }
+        let flyout = self.card.as_mut().expect("panel flyout");
+        flyout.draw(&data, &self.m);
+    }
+
+    fn hide_card(&mut self) {
+        if let Some(flyout) = self.card.as_mut() {
+            flyout.hide();
+        }
+        self.card_slot = None;
+        self.hover_slot = None;
+        self.card_target = None;
+    }
+
+    /// The animation tick: steps the springs (arrival, hover halo, arcs)
+    /// and settles the card's linger. Returns true while something still
+    /// moves, so the app knows to keep the frame clock alive.
     pub fn tick(&mut self) -> bool {
         let now = pulse_core::timeutil::now_ms();
+        let dt = TICK_SECONDS;
 
-        // Collapse after the pointer has been gone long enough, docked
-        // only: off the edge there is nothing to hide against.
-        if self.auto_collapse() && self.docked && !self.pointer_inside && self.expanded {
-            if let Some(leave_at) = self.leave_at {
-                if now - leave_at >= COLLAPSE_DELAY_MS {
-                    self.expanded = false;
-                    self.card_slot = None;
-                    self.hover_slot = None;
+        // The springs: each one steps toward its target with the same
+        // fixed dt the timer hands out.
+        spring_step(&mut self.presence, &mut self.presence_v, 1.0, 0.32, 0.86, dt);
+        let hover_target = if self.hover_slot.is_some() { 1.0 } else { 0.0 };
+        spring_step(&mut self.hover_spring, &mut self.hover_v, hover_target, 0.34, 0.82, dt);
+        for entry in &self.entries {
+            let Some(s) = self.arc_springs.get_mut(&entry.account.id()) else {
+                continue;
+            };
+            if let Some(target) = entry.ring.used_fraction {
+                spring_step(&mut s.0, &mut s.1, target, 0.5, 0.85, dt);
+            } else {
+                s.0 = 0.0;
+                s.1 = 0.0;
+            }
+            if let Some(target) = entry.ring.second_fraction {
+                spring_step(&mut s.2, &mut s.3, target, 0.5, 0.85, dt);
+            } else {
+                s.2 = 0.0;
+                s.3 = 0.0;
+            }
+        }
+        // The springs write their displayed values straight onto the
+        // models, so drawing stays a read.
+        for entry in &mut self.entries {
+            if let Some(s) = self.arc_springs.get(&entry.account.id()) {
+                if entry.ring.used_fraction.is_some() {
+                    entry.ring.used_fraction = Some(s.0.clamp(0.0, 1.0));
+                }
+                if entry.ring.second_fraction.is_some() {
+                    entry.ring.second_fraction = Some(s.2.clamp(0.0, 1.0));
                 }
             }
         }
 
-        let target = if self.expanded { 1.0 } else { 0.0 };
-        let speed = 0.14;
-        self.openness += (target - self.openness) * speed;
-        if (self.openness - target).abs() < 0.005 {
-            self.openness = target;
+        let moving = !(settled(self.presence, self.presence_v, 1.0)
+            && settled(self.hover_spring, self.hover_v, hover_target))
+            || self.entries.iter().any(|e| {
+                let Some(s) = self.arc_springs.get(&e.account.id()) else {
+                    return false;
+                };
+                e.ring
+                    .used_fraction
+                    .is_some_and(|t| !settled(s.0, s.1, t))
+                    || e.ring
+                        .second_fraction
+                        .is_some_and(|t| !settled(s.2, s.3, t))
+            });
+        let mut moving = moving;
+
+        // The card's slide toward its ring.
+        if let (Some((tx, ty)), true) = (self.card_target, self.card_shown()) {
+            spring_step(&mut self.card_x, &mut self.card_vx, tx as f64, 0.34, 0.82, dt);
+            spring_step(&mut self.card_y, &mut self.card_vy, ty as f64, 0.34, 0.82, dt);
+            if !(settled(self.card_x, self.card_vx, tx as f64)
+                && settled(self.card_y, self.card_vy, ty as f64))
+            {
+                if let Some(flyout) = self.card.as_mut() {
+                    flyout.move_to(self.card_x as i32, self.card_y as i32);
+                }
+                moving = true;
+            }
         }
-        let moving = (self.openness - target).abs() > 0.0005;
 
-        // Any busy ring or open card keeps the frame clock alive.
+        // The linger: the pointer left the bar, the card waits a beat for
+        // it to arrive — on the card, or on another ring.
+        let mut card_changed = false;
+        if let Some(at) = self.leave_at {
+            if now >= at {
+                self.leave_at = None;
+                let inside = self.card.as_ref().map(|c| c.pointer_inside).unwrap_or(false);
+                if !inside {
+                    self.hide_card();
+                    card_changed = true;
+                }
+            }
+        }
+
+        // Any busy ring keeps the frame clock alive.
         let busy = self.entries.iter().any(|e| e.ring.is_busy || e.ring.is_refreshing);
-        let card = self.card_slot.is_some() && self.expanded;
-
-        let needs_frame = moving || busy || card;
-        if needs_frame {
+        if moving || busy || card_changed {
             self.redraw();
         }
-        needs_frame
+        moving || busy
     }
 
     pub fn on_mouse_move(&mut self, x: i32, y: i32) {
@@ -615,54 +735,36 @@ impl PanelWindow {
             self.drag_move(x, y);
             return;
         }
-        self.pointer_inside = true;
         self.leave_at = None;
 
         let (ux, uy) = (x as f64 / self.dpi, y as f64 / self.dpi);
         let count = self.entries.len();
-
-        // Collapsed: a hit band wider than the sliver opens it — throwing
-        // the pointer at the edge always lands on it.
-        if !self.expanded {
-            let sliver = berth::sliver_rect(&self.m, self.edge, self.window_units);
-            let hit = self.m.s(dock::COLLAPSED_HIT_WIDTH) as f32;
-            let inside = match self.edge {
-                Edge::Right => ux as f32 >= sliver.0 - hit,
-                Edge::Left => ux as f32 <= sliver.0 + sliver.2 + hit,
-                Edge::Top => uy as f32 <= sliver.1 + sliver.3 + hit,
-            };
-            if inside {
-                self.expanded = true;
-                self.openness = self.openness.max(0.02);
-            }
-            self.track_mouse();
-            return;
-        }
-
-        // Expanded: which ring, if any.
-        let rail = berth::rail_frame(&self.m, count.max(1), self.edge, self.docked, self.window_units);
+        let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
         let along = match self.edge {
             Edge::Top => ux - rail.0,
             _ => uy - rail.1,
         };
-        let slot = geometry::dock::slot_at(&self.m, along, self.edge.axis(), self.docked, count);
+        let slot = geometry::dock::slot_at(&self.m, along, self.edge.axis(), count);
         if slot != self.hover_slot {
             self.hover_slot = slot;
             self.card_slot = slot;
+            if slot.is_some() {
+                self.place_card();
+            } else {
+                self.hide_card();
+            }
+            self.redraw();
         }
         self.track_mouse();
     }
 
     pub fn on_mouse_leave(&mut self) {
         self.tracking_mouse = false;
-        self.pointer_inside = false;
         if self.drag.is_some() {
             return;
         }
-        self.leave_at = Some(pulse_core::timeutil::now_ms());
-        self.hover_slot = None;
-        self.card_slot = None;
-        self.redraw();
+        // Not immediate: the pointer may be on its way to the card.
+        self.leave_at = Some(pulse_core::timeutil::now_ms() + CARD_LINGER_MS);
     }
 
     fn track_mouse(&mut self) {
@@ -681,33 +783,42 @@ impl PanelWindow {
         }
     }
 
+    /// The flyout reports pointer traffic: `entered` when it arrived on
+    /// the card, false when it left. Leaving the card schedules the same
+    /// linger as leaving the bar, in case the pointer is heading back.
+    pub fn on_card_pointer(&mut self, entered: bool) {
+        if entered {
+            self.leave_at = None;
+        } else {
+            self.leave_at = Some(pulse_core::timeutil::now_ms() + CARD_LINGER_MS);
+        }
+    }
+
     pub fn on_l_button_down(&mut self, x: i32, y: i32) {
         let (ux, uy) = (x as f64 / self.dpi, y as f64 / self.dpi);
         let count = self.entries.len();
 
         // A click on a ring refreshes that account — the ring is a button.
-        if self.expanded {
-            let rail = berth::rail_frame(&self.m, count.max(1), self.edge, self.docked, self.window_units);
-            let along = match self.edge {
-                Edge::Top => ux - rail.0,
-                _ => uy - rail.1,
-            };
-            if let Some(slot) = geometry::dock::slot_at(&self.m, along, self.edge.axis(), self.docked, count) {
-                if let Some(entry) = self.entries.get(slot) {
-                    let _ = self.events.send(PanelEvent::RefreshAccount(entry.account.clone()));
-                    // Immediate visible feedback; the store's answer lands
-                    // through the usual channel.
-                    if let Some(e) = self.entries.get_mut(slot) {
-                        e.ring.is_refreshing = true;
-                    }
-                    self.redraw();
-                    return;
+        let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
+        let along = match self.edge {
+            Edge::Top => ux - rail.0,
+            _ => uy - rail.1,
+        };
+        if let Some(slot) = geometry::dock::slot_at(&self.m, along, self.edge.axis(), count) {
+            if let Some(entry) = self.entries.get(slot) {
+                let _ = self.events.send(PanelEvent::RefreshAccount(entry.account.clone()));
+                // Immediate visible feedback; the store's answer lands
+                // through the usual channel.
+                if let Some(e) = self.entries.get_mut(slot) {
+                    e.ring.is_refreshing = true;
                 }
+                self.redraw();
+                return;
             }
         }
 
-        // Anything else is the drag handle: the berth area between the
-        // rings claims the press.
+        // Anything else is the drag handle: the bar's padding claims the
+        // press.
         self.drag = Some(DragState {
             grab: (ux, uy),
             moved: false,
@@ -732,7 +843,7 @@ impl PanelWindow {
         }
     }
 
-    /// Re-runs placement without resetting the collapse animation.
+    /// Re-runs placement without resetting the arrival ease.
     fn reload_settings_preserving_openness(&mut self) {
         let (scale, spacing, label_leads, side_pct, top_pct, floating, side) =
             pulse_core::settings::with(|s| {
@@ -756,7 +867,6 @@ impl PanelWindow {
         };
         self.edge = Edge::from_name(&side);
         self.docked = !floating;
-        self.expanded = true;
         self.compute_window_size();
         self.place();
         self.redraw();
@@ -775,39 +885,52 @@ impl PanelWindow {
         let (monitor_rect, work) = winutil::monitor_work_at(cursor.x, cursor.y);
         let dpi_scale = work_dpi(&monitor_rect).max(0.5);
         let phys_w = (self.window_units.0 * dpi_scale) as i32;
-        let phys_h = (self.window_units.1 * dpi_scale) as i32;
+        let margin = (dock::EDGE_MARGIN * dpi_scale) as i32;
 
         let want_x = cursor.x - (gx * dpi_scale) as i32;
         let want_y = cursor.y - (gy * dpi_scale) as i32;
 
-        // Fuse to a side **during** the drag, not on mouse-up.
+        // Fuse to a side **during** the drag, not on mouse-up. The edge is
+        // decided from the cursor first, then the size is recomputed for
+        // it, then the bar is placed against that size.
         let fuse = self.m.s(FUSE_DISTANCE) as i32;
-        let dist_right = (work.right - (want_x + phys_w)).abs();
-        let dist_left = (want_x - work.left).abs();
-        let dist_top = (want_y - work.top).abs();
+        let dist_right = (work.right - margin - (want_x + phys_w)).abs();
+        let dist_left = (want_x - margin - work.left).abs();
+        let dist_top = (want_y - margin - work.top).abs();
 
-        let (nx, ny, new_edge, new_docked) = if dist_right <= fuse {
-            (work.right - phys_w, work.top + (work.height() - phys_h) / 2, Edge::Right, true)
+        let new_edge = if dist_right <= fuse {
+            Some(Edge::Right)
         } else if dist_left <= fuse {
-            (work.left, work.top + (work.height() - phys_h) / 2, Edge::Left, true)
+            Some(Edge::Left)
         } else if dist_top <= fuse {
-            (
-                want_x.clamp(work.left, (work.right - phys_w).max(work.left)),
-                work.top,
-                Edge::Top,
-                true,
-            )
+            Some(Edge::Top)
         } else {
-            let x = want_x.clamp(work.left, (work.right - phys_w).max(work.left));
-            let y = want_y.clamp(work.top, (work.bottom - phys_h).max(work.top));
-            (x, y, self.edge, false)
+            None
         };
+        let new_docked = new_edge.is_some() || self.docked;
+        let new_edge = new_edge.unwrap_or(self.edge);
 
         if new_edge != self.edge || new_docked != self.docked {
             self.edge = new_edge;
             self.docked = new_docked;
             self.compute_window_size();
         }
+        let phys_w = (self.window_units.0 * dpi_scale) as i32;
+        let phys_h = (self.window_units.1 * dpi_scale) as i32;
+
+        let (nx, ny) = match (self.docked, self.edge) {
+            (true, Edge::Right) => (work.right - phys_w - margin, work.top + (work.height() - phys_h) / 2),
+            (true, Edge::Left) => (work.left + margin, work.top + (work.height() - phys_h) / 2),
+            (true, Edge::Top) => {
+                let x = want_x.clamp(work.left + margin, (work.right - phys_w - margin).max(work.left + margin));
+                (x, work.top + margin)
+            }
+            _ => {
+                let x = want_x.clamp(work.left + margin, (work.right - phys_w - margin).max(work.left + margin));
+                let y = want_y.clamp(work.top + margin, (work.bottom - phys_h - margin).max(work.top + margin));
+                (x, y)
+            }
+        };
 
         // Keep the DPI canvas in step when the drag crossed to another
         // monitor.
@@ -846,19 +969,11 @@ impl PanelWindow {
         unsafe {
             let _ = GetWindowRect(self.hwnd, &mut rect);
         }
-        // Store the **rail's** position, never the window's: the window is
-        // much wider than the rail, and which side the rail sits on flips
-        // at screen mid.
-        let rail = berth::rail_frame(&self.m, self.entries.len().max(1), self.edge, self.docked, self.window_units);
-        let rail_px_x = (rect.left as f64 + rail.0 * self.dpi) as i32;
-        let rail_px_y = (rect.top as f64 + rail.1 * self.dpi) as i32;
-        let rail_px_w = (rail.2 * self.dpi) as i32;
-        let rail_px_h = (rail.3 * self.dpi) as i32;
-
-        let work_w = (work.width() - rail_px_w).max(1) as f64;
-        let work_h = (work.height() - rail_px_h).max(1) as f64;
-        let x = ((rail_px_x - work.left) as f64 / work_w).clamp(0.0, 1.0);
-        let y = ((rail_px_y - work.top) as f64 / work_h).clamp(0.0, 1.0);
+        // The window **is** the rail now, so its own rect is the position.
+        let work_w = (work.width() - rect.width()).max(1) as f64;
+        let work_h = (work.height() - rect.height()).max(1) as f64;
+        let x = ((rect.left - work.left) as f64 / work_w).clamp(0.0, 1.0);
+        let y = ((rect.top - work.top) as f64 / work_h).clamp(0.0, 1.0);
 
         let name = winutil::monitor_name(winutil::monitor_from_hwnd(self.hwnd));
         pulse_core::settings::mutate(|s| {
@@ -908,14 +1023,20 @@ impl PanelWindow {
     }
 }
 
-fn lerp(a: f64, b: f64, t: f64) -> f64 {
-    a + (b - a) * t
+/// One step of the damped spring the macOS app rides — SwiftUI's
+/// `.spring(response:dampingFraction:)` in fixed-step form: ω from the
+/// response, damping from the fraction, integrated semi-implicitly so the
+/// bounce is stable at the timer's 30 ms.
+fn spring_step(x: &mut f64, v: &mut f64, target: f64, response: f64, damping: f64, dt: f64) {
+    let w = std::f64::consts::TAU / response;
+    let c = 2.0 * damping * w;
+    *v += (w * w * (target - *x) - c * *v) * dt;
+    *x += *v * dt;
 }
 
-fn ease(t: f64) -> f64 {
-    // A gentle ease-out; the berth's own animation is the spring the macOS
-    // side rides.
-    1.0 - (1.0 - t) * (1.0 - t)
+/// Whether a spring has come to rest on its target.
+fn settled(x: f64, v: f64, target: f64) -> bool {
+    (x - target).abs() < 0.002 && v.abs() < 0.01
 }
 
 fn work_dpi(monitor_rect: &RECT) -> f64 {
@@ -955,15 +1076,12 @@ fn monitor_for_settings(settings: &pulse_core::settings::AppSettings) -> (RECT, 
             return winutil::monitor_rects(monitor);
         }
     }
-    let (monitor, _) = (
-        unsafe {
-            windows::Win32::Graphics::Gdi::MonitorFromPoint(
-                POINT { x: 0, y: 0 },
-                windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTOPRIMARY,
-            )
-        },
-        (),
-    );
+    let monitor = unsafe {
+        windows::Win32::Graphics::Gdi::MonitorFromPoint(
+            POINT { x: 0, y: 0 },
+            windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTOPRIMARY,
+        )
+    };
     winutil::monitor_rects(monitor)
 }
 
@@ -1005,7 +1123,10 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
             panel.on_mouse_move(x, y);
             LRESULT(0)
         }
-        _WM_MOUSELEAVE => {
+        // WM_MOUSELEAVE lives in UI::Controls in the windows metadata (and
+        // must be named by path — a bare identifier starting with an
+        // underscore, or any bare name, would bind instead of match).
+        windows::Win32::UI::Controls::WM_MOUSELEAVE => {
             panel.on_mouse_leave();
             LRESULT(0)
         }
@@ -1022,26 +1143,50 @@ unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
             LRESULT(0)
         }
         WM_TIMER => {
-            let alive = panel.tick();
-            if !alive {
-                // Keep a slow tick for collapse scheduling; the app drives
-                // the fast one only while something moves.
-                LRESULT(0)
-            } else {
-                LRESULT(0)
+            panel.tick();
+            LRESULT(0)
+        }
+        // The flyout's pointer traffic, folded into the same linger logic.
+        winutil::WM_APP_CARD => {
+            panel.on_card_pointer(wparam.0 != 0);
+            LRESULT(0)
+        }
+        // The system appearance changed: re-read it, re-tint the backdrops,
+        // re-ink the rail (and the icons, whose tint bakes in at load).
+        WM_SETTINGCHANGE => {
+            if setting_change_name(lparam).as_deref() == Some("ImmersiveColorSet") {
+                theme_panel::sync_theme();
+                crate::assets::clear_cache();
+                let dark = theme_panel::is_dark();
+                winutil::apply_system_backdrop(hwnd, dark);
+                if let Some(flyout) = panel.card.as_ref() {
+                    winutil::apply_system_backdrop(flyout.hwnd, dark);
+                }
+                panel.redraw();
             }
+            LRESULT(0)
         }
         WM_DESTROY => LRESULT(0),
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+        // The frame is all client: no title bar, no resize borders — the
+        // styles exist only so DWM treats the window as framed and paints
+        // its backdrop, border and corners.
+        WM_NCCALCSIZE if wparam.0 != 0 => LRESULT(0),
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
 
-/// Forces a repaint from outside the window procedure.
-pub fn invalidate(panel: &PanelWindow) {
-    unsafe {
-        let _ = InvalidateRect(Some(panel.hwnd), None, false);
+/// WM_SETTINGCHANGE's LPARAM names what changed, as a wide string.
+unsafe fn setting_change_name(lparam: LPARAM) -> Option<String> {
+    let ptr = lparam.0 as *const u16;
+    if ptr.is_null() {
+        return None;
     }
+    let mut len = 0usize;
+    while *ptr.add(len) != 0 {
+        len += 1;
+    }
+    Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)))
 }
 
 /// Small helper on RECT the window code uses everywhere.

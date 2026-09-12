@@ -180,19 +180,31 @@ pub fn t(key: &str) -> &'static str {
     Box::leak(key.to_string().into_boxed_str())
 }
 
-/// Interpolates `{n}`-style placeholders. Values are passed as strings so an
-/// integer can never silently produce the wrong formatter.
+/// Interpolates `{xxx}`-style placeholders. Values are passed as strings so
+/// an integer can never silently produce the wrong formatter.
 pub fn t_fmt(key: &str, values: &[&str]) -> String {
     let mut out = t(key).to_string();
     for value in values {
-        // The table uses "{n}"; later values would be "{0}"-shaped and are
-        // matched in order against the first unfilled placeholder.
-        if out.contains("{n}") {
-            out = out.replacen("{n}", value, 1);
-        } else {
-            out.push(' ');
-            out.push_str(value);
-        }
+        // Placeholders are positional, whatever they are named: the first
+        // unfilled `{...}` gets the next value. (Matching only `{n}`
+        // literally once left `{p} Used 7%` on screen.)
+        let start = match out.find('{') {
+            Some(s) => s,
+            None => {
+                out.push(' ');
+                out.push_str(value);
+                continue;
+            }
+        };
+        let end = match out[start..].find('}') {
+            Some(e) => start + e + 1,
+            None => {
+                out.push(' ');
+                out.push_str(value);
+                continue;
+            }
+        };
+        out = format!("{}{}{}", &out[..start], value, &out[end..]);
     }
     out
 }

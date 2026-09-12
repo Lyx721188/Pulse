@@ -1,25 +1,46 @@
 //! The Direct2D / DirectWrite engine: one factory pair for the process, a
-//! GDI-interop render target per layered window, and the small drawing
-//! vocabulary the panel and the settings window share.
+//! flip-model swap-chain render target per window, and the small drawing
+//! vocabulary the panel and its detail flyout share.
 //!
-//! The floating panel needs per-pixel alpha, so it renders into a memory
-//! DC backed by a premultiplied-BGRA DIB and hands the result to
-//! `UpdateLayeredWindow` — the classic layered-window recipe.
+//! Every window here is a real DWM backdrop window — Mica behind the whole
+//! frame — so the render target must hand DWM premultiplied alpha to
+//! composite over the backdrop with. That is what a flip-model swap chain on
+//! a `WS_EX_NOREDIRECTIONBITMAP` window is for; the old layered-window
+//! recipe cannot see a system backdrop at all.
 
 use std::collections::HashMap;
+use std::mem::ManuallyDrop;
 
 use windows::core::{Interface, Result};
-use windows::Win32::Foundation::{COLORREF, HWND, RECT};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FILL_MODE,
     D2D1_FILL_MODE_ALTERNATE, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
     D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_F,
 };
+use windows::Win32::Graphics::Direct2D::{
+    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
+};
 use windows::Win32::Graphics::Direct2D::*;
+use windows::Win32::Graphics::DirectComposition::{
+    DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
+};
+use windows::Win32::Graphics::Direct3D::{
+    D3D_DRIVER_TYPE_HARDWARE,
+};
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, ID3D11Device,
+};
 use windows::Win32::Graphics::DirectWrite::*;
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
-use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
+};
+use windows::Win32::Graphics::Dxgi::{
+    IDXGIDevice, IDXGIFactory2, IDXGISurface, IDXGISwapChain1, DXGI_PRESENT,
+    DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+    DXGI_USAGE_RENDER_TARGET_OUTPUT, DXGI_SCALING_STRETCH,
+};
+use windows::Win32::Foundation::HMODULE;
 use windows_numerics::{Matrix3x2, Vector2};
 
 pub use crate::theme::Rgba;
@@ -27,9 +48,17 @@ pub use crate::theme::Rgba;
 pub struct D2DEngine {
     pub factory: ID2D1Factory,
     pub dwrite: IDWriteFactory,
+    /// The one D2D device every window draws through — shared, so icon
+    /// bitmaps and other device resources serve the dock and the flyout
+    /// alike.
+    pub device: ID2D1Device,
+    /// The D3D device backing the D2D device; swap chains are created on it.
+    pub d3d: ID3D11Device,
+    /// The DXGI factory the swap chains are created on.
+    pub dxgi_factory: IDXGIFactory2,
     pub round_stroke: ID2D1StrokeStyle,
     pub flat_stroke: ID2D1StrokeStyle,
-    text_formats: std::sync::Mutex<HashMap<(u32, u32, u32), IDWriteTextFormat>>,
+    text_formats: std::sync::Mutex<HashMap<(u32, u32, u32, u32), IDWriteTextFormat>>,
 }
 
 /// A colour as D2D wants it.
@@ -94,9 +123,19 @@ impl D2DEngine {
             let flat_stroke: ID2D1StrokeStyle =
                 factory1.CreateStrokeStyle(&flat_props, None)?.cast()?;
 
+            // The device every render target is created against.
+            let (d3d_device, _context) = make_d3d_device()?;
+            let dxgi_device: IDXGIDevice = d3d_device.cast()?;
+            let device: ID2D1Device = factory1.CreateDevice(&dxgi_device)?;
+            let adapter = dxgi_device.GetAdapter()?;
+            let dxgi_factory: IDXGIFactory2 = adapter.GetParent()?;
+
             Ok(D2DEngine {
                 factory,
                 dwrite,
+                d3d: d3d_device,
+                device,
+                dxgi_factory,
                 round_stroke,
                 flat_stroke,
                 text_formats: std::sync::Mutex::new(HashMap::new()),
@@ -111,14 +150,22 @@ impl D2DEngine {
         size_px: f32,
         weight: DWRITE_FONT_WEIGHT,
         centered: bool,
+        glyph_font: bool,
     ) -> Result<IDWriteTextFormat> {
-        let key = ((size_px * 4.0).round() as u32, weight.0 as u32, centered as u32);
+        let key = ((size_px * 4.0).round() as u32, weight.0 as u32, centered as u32, glyph_font as u32);
         if let Some(existing) = self.text_formats.lock().unwrap().get(&key) {
             return Ok(existing.clone());
         }
         unsafe {
+            // Fluent's icons live in a private-use area the text face
+            // does not carry; they need the icon font.
+            let face = if glyph_font {
+                windows::core::w!("Segoe Fluent Icons")
+            } else {
+                windows::core::w!("Segoe UI Variable Display")
+            };
             let format = self.dwrite.CreateTextFormat(
-                windows::core::w!("Segoe UI Variable Display"),
+                face,
                 None::<&IDWriteFontCollection>,
                 weight,
                 DWRITE_FONT_STYLE_NORMAL,
@@ -135,87 +182,126 @@ impl D2DEngine {
         }
     }
 }
-/// A per-pixel-alpha canvas for a layered window: a memory DC, a DIB, and
-/// a DC render target bound to it.
-pub struct LayeredCanvas {
+/// A per-window canvas over a flip-model swap chain. The window carries
+/// `WS_EX_NOREDIRECTIONBITMAP`, so DWM composites the swap chain's
+/// premultiplied-alpha output straight over its backdrop — that is the
+/// whole trick that lets transparent pixels be Mica and painted pixels be
+/// ink.
+pub struct SwapchainCanvas {
+    #[allow(dead_code)]
     hwnd: HWND,
-    memdc: HDC,
-    bitmap: HBITMAP,
-    old_bitmap: HGDIOBJ,
-    pub rt: ID2D1DCRenderTarget,
+    swap_chain: IDXGISwapChain1,
+    /// The composition hand-over. A plain HWND swap chain makes DWM treat
+    /// the buffer as the window's final layer and skip the backdrop; a
+    /// composition swap chain behind a DComp visual composites
+    /// premultiplied alpha **over** the backdrop — the only route where
+    /// Mica and transparency both survive.
+    _dcomp: Option<(IDCompositionDevice, IDCompositionTarget, IDCompositionVisual)>,
+    pub rt: ID2D1DeviceContext,
     pub width: i32,
     pub height: i32,
 }
 
-impl LayeredCanvas {
-    pub fn new(hwnd: HWND, engine: &D2DEngine, width: i32, height: i32) -> Result<LayeredCanvas> {
+impl SwapchainCanvas {
+    pub fn new(hwnd: HWND, engine: &D2DEngine, width: i32, height: i32) -> Result<SwapchainCanvas> {
         unsafe {
-            let props = D2D1_RENDER_TARGET_PROPERTIES {
-                r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                },
-                dpiX: 0.0,
-                dpiY: 0.0,
-                usage: D2D1_RENDER_TARGET_USAGE_NONE,
-                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-            };
-            let rt = engine.factory.CreateDCRenderTarget(&props)?;
-            let (memdc, bitmap, old_bitmap) = make_dib(width, height)?;
-            rt.BindDC(
-                memdc,
-                &RECT {
-                    left: 0,
-                    top: 0,
-                    right: width,
-                    bottom: height,
-                },
-            )?;
+            let dxgi_device: IDXGIDevice = engine.d3d.cast()?;
+            let rt = engine.device.CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?;
             let _ = rt.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             let _ = rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             let _ = rt.SetTransform(&identity_matrix());
 
-            Ok(LayeredCanvas {
+            let desc = DXGI_SWAP_CHAIN_DESC1 {
+                Width: width.max(1) as u32,
+                Height: height.max(1) as u32,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                BufferCount: 2,
+                Scaling: DXGI_SCALING_STRETCH,
+                SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+                // Composition swap chains are the one kind where
+                // premultiplied alpha is asked for by name.
+                AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+                ..Default::default()
+            };
+            let swap_chain = engine
+                .dxgi_factory
+                .CreateSwapChainForComposition(&engine.d3d, &desc, None)?;
+
+            // Hand the swap chain to DWM as a composition visual rooted on
+            // this window — Windows Terminal's route to a transparent
+            // surface over a system backdrop.
+            let dcomp: IDCompositionDevice = DCompositionCreateDevice(&dxgi_device)?;
+            let target = dcomp.CreateTargetForHwnd(hwnd, true)?;
+            let visual = dcomp.CreateVisual()?;
+            visual.SetContent(&swap_chain)?;
+            target.SetRoot(&visual)?;
+            dcomp.Commit()?;
+            let dcomp = Some((dcomp, target, visual));
+
+            let mut canvas = SwapchainCanvas {
                 hwnd,
-                memdc,
-                bitmap,
-                old_bitmap,
+                swap_chain,
+                _dcomp: dcomp,
                 rt,
-                width,
-                height,
-            })
+                width: width.max(1),
+                height: height.max(1),
+            };
+            canvas.refresh_target()?;
+            Ok(canvas)
         }
     }
 
-    /// A new DIB and re-bind at a new size. The window is only ever resized
-    /// on a DPI change, an axis change, or a rail-length change.
+    /// Resizes the swap chain and re-binds the back buffer. The window is
+    /// only ever resized on a DPI change, an edge change, or a rail-length
+    /// change.
     pub fn resize(&mut self, width: i32, height: i32) -> Result<()> {
         if width == self.width && height == self.height {
             return Ok(());
         }
+        self.width = width.max(1);
+        self.height = height.max(1);
         unsafe {
-            let (memdc, bitmap, old_bitmap) = make_dib(width, height)?;
-            let _ = DeleteObject(self.bitmap.into());
-            self.memdc = memdc;
-            self.bitmap = bitmap;
-            self.old_bitmap = old_bitmap;
-            self.rt.BindDC(
-                memdc,
-                &RECT {
-                    left: 0,
-                    top: 0,
-                    right: width,
-                    bottom: height,
-                },
+            // The old target holds a reference to a back buffer; it has to
+            // be gone before the buffers can be resized.
+            self.rt.SetTarget(None);
+            self.swap_chain.ResizeBuffers(
+                0,
+                self.width as u32,
+                self.height as u32,
+                DXGI_FORMAT_UNKNOWN,
+                DXGI_SWAP_CHAIN_FLAG(0),
             )?;
-            self.width = width;
-            self.height = height;
+            self.refresh_target()?;
         }
         Ok(())
     }
 
-    /// Clears to transparent.
+    /// Points the device context at the current back buffer.
+    fn refresh_target(&mut self) -> Result<()> {
+        unsafe {
+            let surface: IDXGISurface = self.swap_chain.GetBuffer(0)?;
+            let props = D2D1_BITMAP_PROPERTIES1 {
+                pixelFormat: D2D1_PIXEL_FORMAT {
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                },
+                dpiX: 96.0,
+                dpiY: 96.0,
+                bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                colorContext: ManuallyDrop::new(None),
+            };
+            let bitmap = self.rt.CreateBitmapFromDxgiSurface(&surface, Some(&props))?;
+            self.rt.SetTarget(&bitmap);
+        }
+        Ok(())
+    }
+
+    /// Clears to transparent — whatever is not drawn is backdrop.
     pub fn begin(&self) {
         unsafe {
             let _ = self.rt.BeginDraw();
@@ -223,76 +309,44 @@ impl LayeredCanvas {
         }
     }
 
-    /// Commits the frame to the screen through the layered window.
+    /// Commits the frame to the screen.
     pub fn present(&self) {
         unsafe {
             let _ = self.rt.EndDraw(None, None);
-            let size = windows::Win32::Foundation::SIZE {
-                cx: self.width,
-                cy: self.height,
-            };
-            let origin = windows::Win32::Foundation::POINT { x: 0, y: 0 };
-            let blend = BLENDFUNCTION {
-                BlendOp: AC_SRC_OVER as u8,
-                BlendFlags: 0,
-                SourceConstantAlpha: 255,
-                AlphaFormat: AC_SRC_ALPHA as u8,
-            };
-            let _ = UpdateLayeredWindow(
-                self.hwnd,
-                None,
-                None,
-                Some(&size),
-                Some(self.memdc),
-                Some(&origin),
-                COLORREF(0),
-                Some(&blend),
-                ULW_ALPHA,
-            );
+            // Vsync'd: this surface changes a few times a minute at most,
+            // and one frame of wait is nothing against tearing.
+            let _ = self.swap_chain.Present(1, DXGI_PRESENT(0));
         }
     }
 }
 
-impl Drop for LayeredCanvas {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = SelectObject(self.memdc, self.old_bitmap);
-            let _ = DeleteObject(self.bitmap.into());
-            let _ = DeleteDC(self.memdc);
-        }
-    }
-}
-
-/// The DIB factory, shared with the settings window's memory canvas.
-pub fn make_dib_pub(width: i32, height: i32) -> Result<(HDC, HBITMAP, HGDIOBJ)> {
-    make_dib(width, height)
-}
-
-fn make_dib(width: i32, height: i32) -> Result<(HDC, HBITMAP, HGDIOBJ)> {
+/// The D3D device the swap chain and D2D share, with the immediate context
+/// it came with (D2D never touches it, but the API insists on handing it
+/// back).
+fn make_d3d_device() -> Result<(ID3D11Device, windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext)> {
     unsafe {
-        let memdc = CreateCompatibleDC(None);
-        let bmi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width,
-                // Top-down: negative height, so row 0 is the top row.
-                biHeight: -height,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
-        let bitmap = CreateDIBSection(Some(memdc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?;
-        let old = SelectObject(memdc, bitmap.into());
-        Ok((memdc, bitmap, old))
+        let mut device = None;
+        let mut context = None;
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            None,
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            Some(&mut context),
+        )?;
+        let device = device.ok_or_else(|| windows::core::Error::from_hresult(windows::core::HRESULT(-1)))?;
+        let context = context
+            .ok_or_else(|| windows::core::Error::from_hresult(windows::core::HRESULT(-1)))?;
+        Ok((device, context))
     }
 }
 /// Helpers on top of a render target for the drawing the app actually does.
 pub struct Painter<'a> {
-    pub rt: &'a ID2D1DCRenderTarget,
+    pub rt: &'a ID2D1RenderTarget,
     pub engine: &'a D2DEngine,
 }
 
@@ -373,10 +427,12 @@ impl<'a> Painter<'a> {
     /// get wrong.
     pub fn draw_halo(&self, center: Vector2, outer: f32, c: Rgba) -> Result<()> {
         unsafe {
+            // The caller's alpha is the strength; the falloff shape is
+            // fixed here.
             let stops = [
                 D2D1_GRADIENT_STOP {
                     position: 0.0,
-                    color: color(c.with_alpha(0.38)),
+                    color: color(c.with_alpha(c.a * 0.38)),
                 },
                 D2D1_GRADIENT_STOP {
                     position: 1.0,
@@ -423,7 +479,14 @@ impl<'a> Painter<'a> {
         if wide.is_empty() {
             return;
         }
-        let Ok(format) = self.engine.text_format(size_px, weight, halign == 1 && valign == 1)
+        // Private-use scalars are Fluent icon glyphs, not text — the
+        // tofu boxes people see are what happens when they are drawn
+        // with a face that does not carry them.
+        let glyph_font = text
+            .chars()
+            .any(|c| ('\u{E700}'..='\u{F8FF}').contains(&c));
+        let Ok(format) =
+            self.engine.text_format(size_px, weight, halign == 1 && valign == 1, glyph_font)
         else {
             return;
         };

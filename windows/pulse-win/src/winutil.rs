@@ -14,6 +14,8 @@ use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, 
 
 pub const WM_APP_TRAY: u32 = WM_APP + 1;
 pub const WM_APP_STORE: u32 = WM_APP + 2;
+/// The detail flyout -> panel: "pointer came in" / "pointer left".
+pub const WM_APP_CARD: u32 = WM_APP + 3;
 
 /// The instance handle, resolved once.
 pub fn hinstance() -> windows::Win32::Foundation::HINSTANCE {
@@ -152,4 +154,50 @@ pub use windows::Win32::Foundation::RECT;
 /// `HANDLE` that must not be closed for the process lifetime.
 pub fn leak_handle(handle: HANDLE) {
     std::mem::forget(handle);
+}
+
+/// The real Win11 window materials, in three DWM attributes: Mica behind
+/// the whole client area, the frame's dark variant matching the system
+/// appearance, and Windows' own corner rounding. Called again whenever the
+/// theme changes, because the dark-mode flag is a snapshot, not a binding.
+pub fn apply_system_backdrop(hwnd: HWND, dark: bool) {
+    unsafe {
+        let margins = windows::Win32::UI::Controls::MARGINS {
+            cxLeftWidth: -1,
+            cxRightWidth: -1,
+            cyTopHeight: -1,
+            cyBottomHeight: -1,
+        };
+        let r0 = windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(hwnd, &margins);
+        // DWMSBT_MAINWINDOW is Mica.
+        let backdrop: i32 = 2;
+        let r1 = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWA_SYSTEMBACKDROP_TYPE,
+            &backdrop as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+        let dark_flag: i32 = dark as i32;
+        let r2 = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &dark_flag as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+        // DWMWCP_ROUND: the corner radius Windows itself applies to
+        // surfaces — not a radius this app draws.
+        let corner: i32 = 2;
+        let r3 = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWA_WINDOW_CORNER_PREFERENCE,
+            &corner as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "backdrop hwnd={:?} extend={r0:?} mica={r1:?} dark={r2:?} corner={r3:?}",
+                hwnd.0
+            );
+        }
+    }
 }

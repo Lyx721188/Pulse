@@ -2,9 +2,10 @@
 
 A native Windows port of [Pulse](../README.md) — the screen-edge monitor for
 your AI coding allowances — written in Rust against the Win32 / Direct2D
-APIs, styled after WinUI's dark theme. One window sits at a screen edge; each
-ring is a limit, hover for the detail card, and everything refreshes on an
-adaptive ladder so your status line and the panel agree.
+APIs, styled after WinUI. A Mica dock floats beside a screen edge; each
+accent-coloured ring is a limit (the providers' own Lobe icons in the
+middle), hover for the detail card, and everything refreshes on an adaptive
+ladder so your status line and the panel agree.
 
 This is a **port, not a reimplementation of the data rules**: the reading,
 caching, alerting and reporting logic follows the Swift original in
@@ -80,17 +81,30 @@ Two crates:
   counterpart here), the reading cache with its reconcile rules, adaptive
   refresh pacing, alerts, localization (English + 简体中文) and the `--json`
   report. Compiles anywhere.
-- **`pulse-win`** — the Win32 surface: a layered window drawn with Direct2D
-  over a GDI memory DC (per-pixel alpha for the berth and the hover card),
-  the Fluent-styled settings window with a Mica backdrop and custom caption
-  buttons, the tray icon, notifications, single-instance enforcement and the
-  GitHub device sign-in flow. Windows only.
+- **`pulse-win`** — the Win32 surface. The dock and the detail flyout are
+  two `WS_EX_NOREDIRECTIONBITMAP` windows whose frames are composed by DWM:
+  **real Mica** (`DWMWA_SYSTEMBACKDROP_TYPE`), Windows' own corner radius and
+  border, dark/light following the system. Rendering is a flip-model
+  `CreateSwapChainForComposition` swap chain handed to DWM through a
+  DirectComposition visual — the only route where the premultiplied alpha
+  **and** the system backdrop both survive — drawn with Direct2D. The
+  settings window is WinUI 3 via Microsoft's [Windows
+  Reactor](https://github.com/microsoft/windows-rs) (a
+  `windows-reactor` component served on the main thread), while the panel,
+  tray and notifications are classic Win32 on a worker thread. Provider
+  marks are the macOS app's Lobe SVG set, rasterised once to transparent
+  PNGs and tinted at load into the theme's ink. Motion is the macOS app's:
+  the arrival, the hover halo, the arcs and the card's slide between rings
+  are all damped springs — SwiftUI's `.spring(response:…)`,
+  `dampingFraction:…)` integrated in fixed steps. Windows only.
 
-Design tokens follow WinUI's dark theme (`theme.rs`): the panel keeps the
-macOS app's obsidian surface; text faces, corner radii, control fills and
-hover states use the Fluent palette. Credentials are stored with
-`CryptProtectData` under the current user, so they do not survive
-`roaming` to another machine — by design.
+Design tokens follow WinUI (`theme.rs`): the ink sits directly on Mica, in
+one dark and one light voice matched to the system appearance; ring arcs,
+progress bars and the hover glow use the **system accent colour**. The theme
+and accent are re-read whenever Windows announces a change, and the icon
+cache re-tints with them. Credentials are stored with `CryptProtectData`
+under the current user, so they do not survive `roaming` to another machine
+— by design.
 
 ## Keeping the port honest
 
