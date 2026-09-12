@@ -184,6 +184,9 @@ pub struct PanelWindow {
     card_y: f64,
     card_vy: f64,
     card_target: Option<(i32, i32)>,
+    /// The card content's entrance fade, 0 → 1 on the same spring family.
+    card_alpha: f64,
+    card_alpha_v: f64,
     /// When the pointer left the bar and the card should follow it out,
     /// unless it has moved onto the card first.
     leave_at: Option<i64>,
@@ -230,6 +233,8 @@ impl PanelWindow {
             card_y: 0.0,
             card_vy: 0.0,
             card_target: None,
+            card_alpha: 0.0,
+            card_alpha_v: 0.0,
             leave_at: None,
             drag: None,
             window_units: (0.0, 0.0),
@@ -484,8 +489,9 @@ impl PanelWindow {
         let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
         // The arrival spring drives both the fade and the ring's size, so
         // the overshoot reads as a bounce, not as a flicker. The hover
-        // spring is the focus gesture: the pointed-at ring grows a step and
-        // the halo blooms beneath it, both riding one spring.
+        // spring is the focus gesture — and it belongs to the **pointed-at
+        // ring alone**: halo, track brightness and a step of growth, all
+        // riding one spring.
         let arrive = self.presence.clamp(0.0, 1.0);
         let ring_scale = 0.55 + 0.45 * self.presence;
         let halo = self.hover_spring;
@@ -498,17 +504,16 @@ impl PanelWindow {
             };
             let ink = theme_panel::palette().text_primary;
             for (index, entry) in self.entries.iter().enumerate() {
+                let is_hover = self.hover_slot == Some(index);
                 let mut model = entry.ring.clone();
-                model.halo = if self.hover_slot == Some(index) {
-                    halo
-                } else {
-                    0.0
-                };
+                model.halo = if is_hover { halo } else { 0.0 };
                 let center = ring_center(&self.m, index, rail, self.edge);
                 let _ = draw_ring(
                     &painter,
                     center,
-                    self.m.s(dock::RING_DIAMETER) * ring_scale * focus_grow,
+                    self.m.s(dock::RING_DIAMETER)
+                        * ring_scale
+                        * if is_hover { focus_grow } else { 1.0 },
                     self.m.s(dock::RING_LINE_WIDTH),
                     self.m.scale,
                     &model,
@@ -563,7 +568,7 @@ impl PanelWindow {
             if let Some(slot) = self.card_slot {
                 if let Some((data, _)) = self.card_payload(slot) {
                     if let Some(flyout) = self.card.as_mut() {
-                        flyout.draw(&data, &self.m);
+                        flyout.draw(&data, &self.m, self.card_alpha.min(1.0) as f32);
                     }
                 }
             }
@@ -592,8 +597,8 @@ impl PanelWindow {
 
     /// Puts the card beside the ring it points at — on the desktop side of
     /// the bar, vertically centred on the ring, clamped into the monitor.
-    /// First appearance is born on the ring and springs out to rest; a
-    /// move between rings rides the same spring across.
+    /// First appearance lands in place and fades up on the spring; a move
+    /// between rings slides on the position spring.
     fn place_card(&mut self) {
         let Some(slot) = self.card_slot else {
             self.hide_card();
@@ -640,19 +645,20 @@ impl PanelWindow {
             let flyout = self.card.as_mut().expect("panel flyout");
             flyout.show_at(self.card_x as i32, self.card_y as i32, (cw, ch), dpi);
         } else {
-            // First appearance is born on the ring — centred on it, half
-            // the card hanging over the bar — and the slide spring carries
-            // it out to its resting place. That travel is the entrance.
-            self.card_x = ring_x;
-            self.card_y = ring_y - h / 2.0;
+            // First appearance lands where it belongs, empty, and the
+            // content fades up as the entrance.
+            self.card_x = tx;
+            self.card_y = ty;
             self.card_vx = 0.0;
             self.card_vy = 0.0;
+            self.card_alpha = 0.0;
+            self.card_alpha_v = 0.0;
             self.card_target = Some((tx as i32, ty as i32));
             let flyout = self.card.as_mut().expect("panel flyout");
-            flyout.show_at(ring_x as i32, self.card_y as i32, (cw, ch), dpi);
+            flyout.show_at(tx as i32, ty as i32, (cw, ch), dpi);
         }
         let flyout = self.card.as_mut().expect("panel flyout");
-        flyout.draw(&data, &self.m);
+        flyout.draw(&data, &self.m, self.card_alpha.min(1.0) as f32);
     }
 
     fn hide_card(&mut self) {
@@ -757,6 +763,18 @@ impl PanelWindow {
                 if let Some(flyout) = self.card.as_mut() {
                     flyout.move_to(self.card_x as i32, self.card_y as i32);
                 }
+                moving = true;
+            }
+            // The content's fade-up after (or during) the slide.
+            if self.card_alpha < 1.0 {
+                spring_step(
+                    &mut self.card_alpha,
+                    &mut self.card_alpha_v,
+                    1.0,
+                    0.32,
+                    0.86,
+                    dt,
+                );
                 moving = true;
             }
         }

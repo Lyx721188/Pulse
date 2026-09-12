@@ -51,12 +51,19 @@ pub fn body_size(m: &Metrics, windows_count: usize, footnote: bool, forecast: bo
     (w, h)
 }
 
-/// Draws the card's content with its padding inset from `origin`.
+/// Scales a colour's alpha by the card's entrance fade.
+fn faded(c: Rgba, alpha: f32) -> Rgba {
+    c.with_alpha(c.a * alpha)
+}
+
+/// Draws the card's content with its padding inset from `origin`. `alpha`
+/// is the entrance fade: 0 invisible, 1 fully there.
 pub fn draw_card(
     painter: &Painter,
     m: &Metrics,
     origin: (f64, f64),
     data: &CardData,
+    alpha: f32,
 ) -> windows::core::Result<()> {
     let palette = panel::palette();
     let inset_x = origin.0 + m.s(card::PADDING);
@@ -65,7 +72,7 @@ pub fn draw_card(
 
     // Header: the mark and the title, one line, always — the card's height
     // is budgeted, and a wrapped header would slice off against the edge.
-    let title_brush = painter.brush(palette.text_primary)?;
+    let title_brush = painter.brush(faded(palette.text_primary, alpha))?;
     let mark_size = m.s(card::HEADER_ICON) as f32;
     let mark_y = (cy + (m.s(card::HEADER_HEIGHT) - m.s(card::HEADER_ICON)) / 2.0) as f32;
     let mut drew_mark = false;
@@ -80,7 +87,7 @@ pub fn draw_card(
                     ctx.DrawBitmap(
                         &bitmap,
                         Some(&dest),
-                        1.0,
+                        alpha,
                         windows::Win32::Graphics::Direct2D::D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
                         None,
                         None,
@@ -135,7 +142,7 @@ pub fn draw_card(
             } else {
                 reason.message().to_string()
             };
-            let message_brush = painter.brush(palette.text_secondary)?;
+            let message_brush = painter.brush(faded(palette.text_secondary, alpha))?;
             draw_wrapped(
                 painter,
                 &message,
@@ -149,7 +156,7 @@ pub fn draw_card(
         State::Live | State::Stale => {
             for window in &data.usage.windows {
                 cy += m.s(card::CONTENT_SPACING);
-                draw_progress_row(painter, m, inset_x, &mut cy, inset_w, window, data)?;
+                draw_progress_row(painter, m, inset_x, &mut cy, inset_w, window, data, alpha)?;
             }
 
             // A card with only a title reads as a card that failed to load:
@@ -166,10 +173,11 @@ pub fn draw_card(
                         inset_w,
                         &pulse_core::localization::t("Credit balance").to_string(),
                         balance,
+                        alpha,
                     );
                 } else {
                     cy += m.s(card::CONTENT_SPACING);
-                    let message_brush = painter.brush(palette.text_secondary)?;
+                    let message_brush = painter.brush(faded(palette.text_secondary, alpha))?;
                     draw_wrapped(
                         painter,
                         pulse_core::localization::t("No limits reported."),
@@ -198,7 +206,7 @@ pub fn draw_card(
             .unwrap_or_else(|| {
                 pulse_core::localization::t("Reading may be out of date").to_string()
             });
-        let footnote_brush = painter.brush(palette.text_disabled)?;
+        let footnote_brush = painter.brush(faded(palette.text_disabled, alpha))?;
         cy += m.s(card::CONTENT_SPACING);
         painter.text(
             &stamp,
@@ -229,6 +237,7 @@ fn draw_progress_row(
     width: f64,
     window: &pulse_core::model::UsageWindow,
     data: &CardData,
+    alpha: f32,
 ) -> windows::core::Result<()> {
     let palette = panel::palette();
     let spent_color = usage_tint::is_spent(Some(window));
@@ -236,7 +245,7 @@ fn draw_progress_row(
     // The name gets the row to itself; a scoped name plus a reset time does
     // not fit one line, and the name is the half that says which limit
     // this is.
-    let title_brush = painter.brush(palette.text_primary)?;
+    let title_brush = painter.brush(faded(palette.text_primary, alpha))?;
     painter.text(
         &window.display_name(),
         crate::d2d::rect(
@@ -263,7 +272,7 @@ fn draw_progress_row(
     };
     let bar_h = m.s(card::PROGRESS_BAR_HEIGHT) as f32;
     let bar_y = (*cy + m.s(card::PROGRESS_BAR_HEIGHT) / 2.0) as f32;
-    let track_brush = painter.brush(palette.bar_track)?;
+    let track_brush = painter.brush(faded(palette.bar_track, alpha))?;
     draw_capsule(
         painter,
         x as f32,
@@ -275,7 +284,7 @@ fn draw_progress_row(
 
     let fill_w = (width * progress) as f32;
     if progress > 0.0 {
-        let fill_brush = painter.brush(panel::accent())?;
+        let fill_brush = painter.brush(faded(panel::accent(), alpha))?;
         // The smallest non-zero reading still puts a dot of colour on
         // screen — the same rule the ring's round cap follows.
         let fill_w = fill_w.max(bar_h).min(width as f32);
@@ -299,9 +308,9 @@ fn draw_progress_row(
         pulse_core::localization::t_fmt("{p} Used", &[&percent_text])
     };
     let figure_brush = painter.brush(if spent_color {
-        Rgba::from(usage_tint::EXHAUSTED)
+        faded(Rgba::from(usage_tint::EXHAUSTED), alpha)
     } else {
-        palette.text_secondary
+        faded(palette.text_secondary, alpha)
     })?;
     painter.text(
         &figure_label,
@@ -320,7 +329,7 @@ fn draw_progress_row(
 
     let reset = reset_text(window);
     if !reset.is_empty() {
-        let reset_brush = painter.brush(palette.text_disabled)?;
+        let reset_brush = painter.brush(faded(palette.text_disabled, alpha))?;
         painter.text(
             &reset,
             crate::d2d::rect(
@@ -365,7 +374,7 @@ fn draw_progress_row(
                     palette.text_disabled,
                 )
             };
-            let burn_brush = painter.brush(color)?;
+            let burn_brush = painter.brush(faded(color, alpha))?;
             painter.text(
                 &text,
                 crate::d2d::rect(
@@ -424,9 +433,10 @@ fn draw_value_row(
     width: f64,
     title: &str,
     value: &str,
+    alpha: f32,
 ) -> windows::core::Result<()> {
     let palette = panel::palette();
-    let title_brush = painter.brush(palette.text_primary)?;
+    let title_brush = painter.brush(faded(palette.text_primary, alpha))?;
     painter.text(
         title,
         crate::d2d::rect(
@@ -441,7 +451,7 @@ fn draw_value_row(
         0,
         1,
     );
-    let value_brush = painter.brush(palette.text_secondary)?;
+    let value_brush = painter.brush(faded(palette.text_secondary, alpha))?;
     painter.text(
         value,
         crate::d2d::rect(

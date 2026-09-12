@@ -148,8 +148,9 @@ impl Flyout {
         unsafe { IsWindowVisible(self.hwnd).as_bool() }
     }
 
-    /// Draws the card's content over its Mica.
-    pub fn draw(&mut self, data: &CardData, m: &Metrics) {
+    /// Draws the card's content over its Mica. `alpha` is the entrance
+    /// fade, driven by the panel's spring.
+    pub fn draw(&mut self, data: &CardData, m: &Metrics, alpha: f32) {
         let Some(canvas) = self.canvas.as_ref() else {
             return;
         };
@@ -163,7 +164,7 @@ impl Flyout {
             rt: &canvas.rt,
             engine: global_engine(),
         };
-        let _ = draw_card(&painter, m, (0.0, 0.0), data);
+        let _ = draw_card(&painter, m, (0.0, 0.0), data, alpha);
         canvas.present();
     }
 }
