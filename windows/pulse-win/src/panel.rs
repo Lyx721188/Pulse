@@ -34,6 +34,12 @@ use crate::winutil;
 /// How long the card lingers after the pointer leaves the bar, so a trip
 /// from ring to card does not flicker it away.
 const CARD_LINGER_MS: i64 = 220;
+/// How long the pointer may be gone before the dock retreats off-screen —
+/// the macOS app's collapse delay.
+const RETREAT_DELAY_MS: i64 = 1500;
+/// How much of the bar stays on screen while it is retreated, in physical
+/// pixels: the sliver the pointer lands on to summon it back.
+const PEEK_PX: f64 = 5.0;
 /// How close a drag must come to an edge to fuse with it, in design units.
 const FUSE_DISTANCE: f64 = 28.0;
 /// The timer hands out 30 ms frames; the springs step in the same units.
@@ -187,6 +193,16 @@ pub struct PanelWindow {
     /// The card content's entrance fade, 0 → 1 on the same spring family.
     card_alpha: f64,
     card_alpha_v: f64,
+    /// The idle retreat: false docked out in the open, true slid almost
+    /// fully off-screen. `recede` is the spring between the two — 0 at
+    /// rest, 1 hidden, allowed to overshoot a little on the way.
+    hidden: bool,
+    recede: f64,
+    recede_v: f64,
+    hide_at: Option<i64>,
+    base_pos: (i32, i32),
+    hidden_pos: (i32, i32),
+    phys_size: (i32, i32),
     /// When the pointer left the bar and the card should follow it out,
     /// unless it has moved onto the card first.
     leave_at: Option<i64>,
@@ -235,6 +251,13 @@ impl PanelWindow {
             card_target: None,
             card_alpha: 0.0,
             card_alpha_v: 0.0,
+            hidden: false,
+            recede: 0.0,
+            recede_v: 0.0,
+            hide_at: None,
+            base_pos: (0, 0),
+            hidden_pos: (0, 0),
+            phys_size: (1, 1),
             leave_at: None,
             drag: None,
             window_units: (0.0, 0.0),
@@ -308,6 +331,11 @@ impl PanelWindow {
         };
         self.edge = Edge::from_name(&side);
         self.docked = !floating;
+        // A setting that forbids retreating also summons a retreated bar
+        // straight back out.
+        if !self.can_retreat() {
+            self.set_hidden(false);
+        }
         self.compute_window_size();
         self.place();
         self.redraw();
@@ -405,16 +433,54 @@ impl PanelWindow {
             (work.bottom - physical.1 - margin).max(work.top + margin),
         );
 
+        // Where the bar rests, and where it retreats to when idle: slid
+        // almost fully off the screen, with a sliver of itself left as the
+        // target for the pointer's return.
+        let peek = (PEEK_PX as f64 * dpi_scale) as i32;
+        self.base_pos = (px, py);
+        self.phys_size = physical;
+        self.hidden_pos = match self.edge {
+            Edge::Right => (work.right - peek, py),
+            Edge::Left => (work.left, py),
+            Edge::Top => (px, work.top),
+        };
+        self.apply_position();
+    }
+
+    /// Sets the window's rect for the retreat spring's current value — a
+    /// plain interpolation between the resting place and the hidden one.
+    fn apply_position(&mut self) {
+        let t = self.recede;
+        let x = self.base_pos.0 as f64 + (self.hidden_pos.0 - self.base_pos.0) as f64 * t;
+        let y = self.base_pos.1 as f64 + (self.hidden_pos.1 - self.base_pos.1) as f64 * t;
         unsafe {
             let _ = SetWindowPos(
                 self.hwnd,
                 Some(HWND_TOPMOST),
-                px,
-                py,
-                physical.0,
-                physical.1,
+                x as i32,
+                y as i32,
+                self.phys_size.0,
+                self.phys_size.1,
                 SWP_NOACTIVATE,
             );
+        }
+    }
+
+    /// Whether the dock should ever retreat: the setting says so, and only
+    /// a docked bar retreats — a freely floating panel keeps its place.
+    fn can_retreat(&self) -> bool {
+        self.docked && pulse_core::settings::with(|s| s.auto_collapse)
+    }
+
+    /// The retreat state machine's switch. Retreating closes the card: a
+    /// bar that has left the screen has nothing to point at.
+    fn set_hidden(&mut self, hidden: bool) {
+        if self.hidden == hidden {
+            return;
+        }
+        self.hidden = hidden;
+        if hidden {
+            self.hide_card();
         }
     }
 
@@ -797,6 +863,32 @@ impl PanelWindow {
             }
         }
 
+        // The idle retreat: the pointer has been gone long enough, and the
+        // bar slides off-screen to a sliver of itself.
+        if let Some(at) = self.hide_at {
+            if now >= at {
+                self.hide_at = None;
+                self.set_hidden(true);
+            }
+        }
+
+        // The retreat spring: the bar's own travel between its resting
+        // place and the screen edge, the "sinking in" the dock does when
+        // nothing needs it.
+        let recede_target = if self.hidden { 1.0 } else { 0.0 };
+        if !settled(self.recede, self.recede_v, recede_target) {
+            spring_step(
+                &mut self.recede,
+                &mut self.recede_v,
+                recede_target,
+                0.45,
+                0.8,
+                dt,
+            );
+            self.apply_position();
+            moving = true;
+        }
+
         // Any busy ring keeps the frame clock alive.
         let busy = self
             .entries
@@ -814,6 +906,12 @@ impl PanelWindow {
             return;
         }
         self.leave_at = None;
+        // The pointer found the bar — wherever it was, the dock comes back
+        // out. This is the retreated sliver's summons.
+        if self.hidden {
+            self.set_hidden(false);
+        }
+        self.hide_at = None;
 
         let (ux, uy) = (x as f64 / self.dpi, y as f64 / self.dpi);
         let count = self.entries.len();
@@ -843,6 +941,11 @@ impl PanelWindow {
         }
         // Not immediate: the pointer may be on its way to the card.
         self.leave_at = Some(pulse_core::timeutil::now_ms() + CARD_LINGER_MS);
+        // And if it stays gone, the dock sinks back off-screen — unless a
+        // setting or a free-floating panel says it has nowhere to go.
+        if self.can_retreat() {
+            self.hide_at = Some(pulse_core::timeutil::now_ms() + RETREAT_DELAY_MS);
+        }
     }
 
     fn track_mouse(&mut self) {
@@ -873,6 +976,12 @@ impl PanelWindow {
     }
 
     pub fn on_l_button_down(&mut self, x: i32, y: i32) {
+        // A press on the retreated sliver is a summons, not a drag handle.
+        if self.hidden {
+            self.set_hidden(false);
+            self.hide_at = None;
+            return;
+        }
         let (ux, uy) = (x as f64 / self.dpi, y as f64 / self.dpi);
         let count = self.entries.len();
 
