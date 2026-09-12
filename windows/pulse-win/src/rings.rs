@@ -19,7 +19,7 @@ const REFRESH_SWEEP_DEG: f64 = 0.16 * 360.0;
 const REFRESH_PERIOD_MS: f64 = 850.0;
 
 /// The halo's reach, in design units.
-const HALO_RADIUS: f64 = 10.0;
+const HALO_RADIUS: f64 = 14.0;
 
 /// The gap between the progress ring and the mark it encircles, and the
 /// mark's share of the middle.
@@ -125,9 +125,14 @@ pub fn draw_ring(
         )?;
     }
 
-    // Track.
+    // Track. The pointed-at ring's track brightens with the halo, so the
+    // whole ring wakes up — arc, track and glow together.
     let track = circle_geometry(painter.engine, center, radius)?;
-    let brush = painter.brush(panel::palette().track)?;
+    let track_color = {
+        let base = panel::palette().track;
+        base.with_alpha((base.a + 0.28 * model.halo as f32).min(1.0))
+    };
+    let brush = painter.brush(track_color)?;
     painter.draw_geometry(&track, &brush, lw, true);
 
     // Usage arc: always the accent. What it measures is written under it;

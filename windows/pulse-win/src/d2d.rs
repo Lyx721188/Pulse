@@ -453,7 +453,7 @@ impl<'a> Painter<'a> {
             let stops = [
                 D2D1_GRADIENT_STOP {
                     position: 0.0,
-                    color: color(c.with_alpha(c.a * 0.38)),
+                    color: color(c.with_alpha(c.a * 0.5)),
                 },
                 D2D1_GRADIENT_STOP {
                     position: 1.0,

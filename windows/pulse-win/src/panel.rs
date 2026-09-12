@@ -483,10 +483,13 @@ impl PanelWindow {
         // The rail is the window: Mica behind it all, ink only here.
         let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
         // The arrival spring drives both the fade and the ring's size, so
-        // the overshoot reads as a bounce, not as a flicker.
+        // the overshoot reads as a bounce, not as a flicker. The hover
+        // spring is the focus gesture: the pointed-at ring grows a step and
+        // the halo blooms beneath it, both riding one spring.
         let arrive = self.presence.clamp(0.0, 1.0);
         let ring_scale = 0.55 + 0.45 * self.presence;
         let halo = self.hover_spring;
+        let focus_grow = 1.0 + 0.1 * halo;
         if arrive > 0.0 && count > 0 {
             let label_shows = if self.edge.is_vertical() {
                 self.m.side_percentages
@@ -505,7 +508,7 @@ impl PanelWindow {
                 let _ = draw_ring(
                     &painter,
                     center,
-                    self.m.s(dock::RING_DIAMETER) * ring_scale,
+                    self.m.s(dock::RING_DIAMETER) * ring_scale * focus_grow,
                     self.m.s(dock::RING_LINE_WIDTH),
                     self.m.scale,
                     &model,
@@ -589,7 +592,8 @@ impl PanelWindow {
 
     /// Puts the card beside the ring it points at — on the desktop side of
     /// the bar, vertically centred on the ring, clamped into the monitor.
-    /// First appearance snaps; a move between rings slides on the spring.
+    /// First appearance is born on the ring and springs out to rest; a
+    /// move between rings rides the same spring across.
     fn place_card(&mut self) {
         let Some(slot) = self.card_slot else {
             self.hide_card();
@@ -636,14 +640,16 @@ impl PanelWindow {
             let flyout = self.card.as_mut().expect("panel flyout");
             flyout.show_at(self.card_x as i32, self.card_y as i32, (cw, ch), dpi);
         } else {
-            // First appearance lands on the ring, at rest.
-            self.card_x = tx;
-            self.card_y = ty;
+            // First appearance is born on the ring — centred on it, half
+            // the card hanging over the bar — and the slide spring carries
+            // it out to its resting place. That travel is the entrance.
+            self.card_x = ring_x;
+            self.card_y = ring_y - h / 2.0;
             self.card_vx = 0.0;
             self.card_vy = 0.0;
             self.card_target = Some((tx as i32, ty as i32));
             let flyout = self.card.as_mut().expect("panel flyout");
-            flyout.show_at(tx as i32, ty as i32, (cw, ch), dpi);
+            flyout.show_at(ring_x as i32, self.card_y as i32, (cw, ch), dpi);
         }
         let flyout = self.card.as_mut().expect("panel flyout");
         flyout.draw(&data, &self.m);
