@@ -12,9 +12,7 @@
 
 use super::{pasted_or_none, KeyRing, ProviderService};
 use crate::http::{number, HttpClient};
-use crate::model::{
-    AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow,
-};
+use crate::model::{AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow};
 use std::sync::Arc;
 
 const ENDPOINT: &str = "https://api.kimi.com/coding/v1/usages";
@@ -48,13 +46,14 @@ impl ProviderService for KimiService {
         let header_refs: Vec<(&str, &str)> =
             headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let root = match self
-            .http
-            .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
-        {
-            Ok(v) => v,
-            Err(reason) => return ProviderUsage::unavailable(account, reason),
-        };
+        let root =
+            match self
+                .http
+                .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
+            {
+                Ok(v) => v,
+                Err(reason) => return ProviderUsage::unavailable(account, reason),
+            };
 
         let windows = parse_windows(&root);
         let mut usage = ProviderUsage::live_now(account, windows);
@@ -94,7 +93,8 @@ pub fn parse_windows(root: &serde_json::Value) -> Vec<UsageWindow> {
     // Then the weekly allowance, which the reply carries separately and does
     // not put a length on. Only its reset time is ever displayed; the seconds
     // are what sort it after the shorter windows.
-    if let Some(weekly) = window_from_detail(root.get("usage"), "weekly", Kind::Weekly, 7 * 86_400, false)
+    if let Some(weekly) =
+        window_from_detail(root.get("usage"), "weekly", Kind::Weekly, 7 * 86_400, false)
     {
         found.push(weekly);
     }
@@ -181,7 +181,8 @@ fn plan_name(level: &str) -> Option<String> {
             let mut chars = part.chars();
             match chars.next() {
                 Some(first) => {
-                    first.to_uppercase().collect::<String>() + chars.as_str().to_lowercase().as_str()
+                    first.to_uppercase().collect::<String>()
+                        + chars.as_str().to_lowercase().as_str()
                 }
                 None => String::new(),
             }

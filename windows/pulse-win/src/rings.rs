@@ -4,10 +4,8 @@
 //! outside when it is asked for; a thinner second ring inside.
 
 use windows::core::Interface as _;
-use windows::Win32::Graphics::Direct2D::{
-    D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
-};
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
+use windows::Win32::Graphics::Direct2D::D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
 use windows_numerics::Vector2;
 
 use crate::d2d::{arc_geometry, arc_sweep_geometry, circle_geometry, point, Painter, Rgba};
@@ -99,7 +97,8 @@ pub fn draw_ring(
     } else {
         0.0
     };
-    let centre_diameter = (diameter - (line_width + CENTRE_GAP * scale) * 2.0 - squeeze * 2.0).max(0.0);
+    let centre_diameter =
+        (diameter - (line_width + CENTRE_GAP * scale) * 2.0 - squeeze * 2.0).max(0.0);
 
     // The busy mark rides the empty ring between the disc and the usage
     // ring — or just outside the disc when the second ring is there.
@@ -149,9 +148,13 @@ pub fn draw_ring(
     // number it is showing.
     if model.is_refreshing {
         let angle = (now_ms % REFRESH_PERIOD_MS) / REFRESH_PERIOD_MS * 360.0;
-        if let Some(mark) =
-            arc_sweep_geometry(painter.engine, center, radius, angle - 90.0, REFRESH_SWEEP_DEG)?
-        {
+        if let Some(mark) = arc_sweep_geometry(
+            painter.engine,
+            center,
+            radius,
+            angle - 90.0,
+            REFRESH_SWEEP_DEG,
+        )? {
             let brush = painter.brush(arc_color)?;
             painter.draw_geometry(&mark, &brush, lw, true);
         }
@@ -193,7 +196,8 @@ pub fn draw_ring(
         }
     }
     if !drew_icon {
-        let text_brush = painter.brush(panel::palette().text_primary.with_alpha(mark_alpha as f32))?;
+        let text_brush =
+            painter.brush(panel::palette().text_primary.with_alpha(mark_alpha as f32))?;
         let font_size = (centre_diameter * ICON_SCALE * 0.62) as f32;
         let half = centre_diameter as f32 / 2.0;
         painter.text(
@@ -213,7 +217,11 @@ pub fn draw_ring(
         let second_radius = (diameter / 2.0 - line_width - SECOND_RING_SQUEEZE * scale) as f32;
         let second_lw = (2.5 * scale) as f32;
         let used = second.clamp(0.0, 1.0);
-        let shown = if model.shows_remaining { 1.0 - used } else { used };
+        let shown = if model.shows_remaining {
+            1.0 - used
+        } else {
+            used
+        };
         let track = circle_geometry(painter.engine, center, second_radius)?;
         let brush = painter.brush(panel::palette().track)?;
         painter.draw_geometry(&track, &brush, second_lw, true);
@@ -229,9 +237,13 @@ pub fn draw_ring(
     // the frame clock.
     if model.is_busy {
         let angle = (now_ms % BUSY_PERIOD_MS) / BUSY_PERIOD_MS * 360.0;
-        if let Some(mark) =
-            arc_sweep_geometry(painter.engine, center, busy_radius, angle - 90.0, BUSY_SWEEP_DEG)?
-        {
+        if let Some(mark) = arc_sweep_geometry(
+            painter.engine,
+            center,
+            busy_radius,
+            angle - 90.0,
+            BUSY_SWEEP_DEG,
+        )? {
             let brush = painter.brush(panel::palette().text_primary)?;
             painter.draw_geometry(&mark, &brush, (line_width * 0.5).max(1.5) as f32, true);
         }
@@ -287,7 +299,12 @@ fn quiet(c: Rgba) -> Rgba {
 
 /// The ring's centre point for slot `index`, given the rail's frame and
 /// metrics. Shared by drawing and hit testing.
-pub fn ring_center(m: &crate::geometry::Metrics, index: usize, rail: (f64, f64, f64, f64), edge: crate::geometry::Edge) -> Vector2 {
+pub fn ring_center(
+    m: &crate::geometry::Metrics,
+    index: usize,
+    rail: (f64, f64, f64, f64),
+    edge: crate::geometry::Edge,
+) -> Vector2 {
     use crate::geometry::{dock, Axis};
     let axis = edge.axis();
     let along = dock::ring_centre_along(m, index, axis);

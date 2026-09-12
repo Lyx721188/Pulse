@@ -48,9 +48,16 @@ impl AlertEvent {
     /// The localized headline and body for the notification surface.
     pub fn notification_text(&self) -> (String, String) {
         match self {
-            AlertEvent::Threshold { percent, window_name, .. } => (
+            AlertEvent::Threshold {
+                percent,
+                window_name,
+                ..
+            } => (
                 crate::localization::t("A limit is close").to_string(),
-                crate::localization::t_fmt("{w} passed {p}", &[window_name, &format!("{percent}%")]),
+                crate::localization::t_fmt(
+                    "{w} passed {p}",
+                    &[window_name, &format!("{percent}%")],
+                ),
             ),
             AlertEvent::Spent { window_name, .. } => (
                 crate::localization::t("A limit is spent").to_string(),
@@ -64,7 +71,11 @@ impl AlertEvent {
                 crate::localization::t("Checks keep failing").to_string(),
                 provider_name.clone(),
             ),
-            AlertEvent::LowBalance { provider_name, text, .. } => (
+            AlertEvent::LowBalance {
+                provider_name,
+                text,
+                ..
+            } => (
                 crate::localization::t("Low balance").to_string(),
                 format!("{provider_name}: {text}"),
             ),

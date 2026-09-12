@@ -132,7 +132,15 @@ impl Flyout {
     /// calls this while the card glides between rings.
     pub fn move_to(&mut self, x: i32, y: i32) {
         unsafe {
-            let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                x,
+                y,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOSIZE,
+            );
         }
     }
 
@@ -147,7 +155,9 @@ impl Flyout {
         };
         canvas.begin();
         unsafe {
-            let _ = canvas.rt.SetTransform(&scale_matrix(self.dpi as f32, self.dpi as f32));
+            let _ = canvas
+                .rt
+                .SetTransform(&scale_matrix(self.dpi as f32, self.dpi as f32));
         }
         let painter = crate::d2d::Painter {
             rt: &canvas.rt,
@@ -158,7 +168,12 @@ impl Flyout {
     }
 }
 
-unsafe extern "system" fn flyout_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn flyout_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     let state = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     if state == 0 {
         return DefWindowProcW(hwnd, msg, wparam, lparam);

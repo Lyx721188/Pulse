@@ -128,7 +128,10 @@ impl ProviderService for CommandCodeService {
     }
 }
 
-fn plan_id_of(credits: &serde_json::Value, subscription: Option<&serde_json::Value>) -> Option<String> {
+fn plan_id_of(
+    credits: &serde_json::Value,
+    subscription: Option<&serde_json::Value>,
+) -> Option<String> {
     let from_sub = subscription
         .and_then(|s| s.pointer("/data/planId"))
         .and_then(|v| v.as_str());
@@ -141,10 +144,7 @@ fn plan_id_of(credits: &serde_json::Value, subscription: Option<&serde_json::Val
 /// CLI's own test, and anything else is an account back on what it has
 /// bought. **No answer is not the same as an answer of "none"**: the lookup
 /// is allowed to fail, so its silence is not evidence of no plan.
-fn is_on_a_plan(
-    credits: &serde_json::Value,
-    subscription: Option<&serde_json::Value>,
-) -> bool {
+fn is_on_a_plan(credits: &serde_json::Value, subscription: Option<&serde_json::Value>) -> bool {
     let Some(subscription) = subscription else {
         return plan_id_of(credits, None).is_some();
     };
@@ -187,7 +187,11 @@ fn build_windows(
 /// The two rolling limits, when the account says it is subject to them.
 fn rolling_windows(credits: &serde_json::Value) -> Vec<UsageWindow> {
     let limits = credits.get("windowLimits");
-    if limits.and_then(|l| l.get("limited")).and_then(|v| v.as_bool()) != Some(true) {
+    if limits
+        .and_then(|l| l.get("limited"))
+        .and_then(|v| v.as_bool())
+        != Some(true)
+    {
         return Vec::new();
     }
     [
@@ -208,7 +212,10 @@ fn rolling_windows(credits: &serde_json::Value) -> Vec<UsageWindow> {
             None,
             (used / cap).clamp(0.0, 1.0),
             seconds,
-            window.get("resetAt").and_then(number).map(crate::timeutil::epoch_to_ms),
+            window
+                .get("resetAt")
+                .and_then(number)
+                .map(crate::timeutil::epoch_to_ms),
         );
         window.is_exhausted = used >= cap;
         Some(window)
@@ -425,9 +432,7 @@ fn stamp_query(value: &serde_json::Value) -> String {
 fn stamp_date(value: &serde_json::Value) -> Option<i64> {
     match value {
         serde_json::Value::String(text) => crate::timeutil::parse_iso8601_ms(text),
-        serde_json::Value::Number(number) => {
-            number.as_f64().map(crate::timeutil::epoch_to_ms)
-        }
+        serde_json::Value::Number(number) => number.as_f64().map(crate::timeutil::epoch_to_ms),
         _ => None,
     }
 }
@@ -439,7 +444,8 @@ fn plan_name(id: &str) -> String {
             let mut chars = part.chars();
             match chars.next() {
                 Some(first) => {
-                    first.to_uppercase().collect::<String>() + chars.as_str().to_lowercase().as_str()
+                    first.to_uppercase().collect::<String>()
+                        + chars.as_str().to_lowercase().as_str()
                 }
                 None => String::new(),
             }
@@ -482,8 +488,7 @@ impl CommandCodeService {
         query: &[(&str, &str)],
         key: &str,
     ) -> Result<serde_json::Value, Unavailability> {
-        let items: Vec<(&str, String)> =
-            query.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        let items: Vec<(&str, String)> = query.iter().map(|(k, v)| (*k, v.to_string())).collect();
         self.get_query(path, &items, key)
     }
 

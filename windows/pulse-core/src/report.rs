@@ -133,7 +133,10 @@ fn account_report(account: &AccountKey, reading: Option<ProviderUsage>, now: i64
         .unwrap_or_default();
 
     let headline = reading.as_ref().and_then(|r| {
-        let pinned = settings.pinned_windows.get(&account.id()).map(|s| s.as_str());
+        let pinned = settings
+            .pinned_windows
+            .get(&account.id())
+            .map(|s| s.as_str());
         r.headline_window(pinned).map(|w| HeadlineReport {
             window_id: w.id.clone(),
             used_percent: w.percent_value(false),
@@ -312,7 +315,10 @@ mod tests {
             .iter()
             .map(|w| w["kind"].as_str().unwrap().to_string())
             .collect();
-        assert_eq!(tokens, ["fiveHour", "weekly", "spend", "monthly", "other:10800"]);
+        assert_eq!(
+            tokens,
+            ["fiveHour", "weekly", "spend", "monthly", "other:10800"]
+        );
     }
 
     #[test]
@@ -322,7 +328,10 @@ mod tests {
         let account = AccountKey::primary(Provider::ClaudeCode);
         let mut scoped = window("w", Kind::Weekly, 0.5, true, None);
         scoped.scope = Some("Opus".into());
-        let entry = account_json(&account, Some(reading(&account, vec![scoped], 1_800_000_000_000)));
+        let entry = account_json(
+            &account,
+            Some(reading(&account, vec![scoped], 1_800_000_000_000)),
+        );
         let first = &entry["windows"].as_array().unwrap()[0];
         assert!(first.get("name").is_none());
         assert_eq!(first["scope"], "Opus");
@@ -354,9 +363,9 @@ mod tests {
             &account,
             Some(reading(&account, vec![hourly, monthly], 1_800_000_000_000)),
         )["windows"]
-        .as_array()
-        .unwrap()
-        .clone();
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|w| w.get("estimated").is_some()));
         let five_hour = rows.iter().find(|w| w["id"] == "five-hour").unwrap();

@@ -228,12 +228,7 @@ pub fn glm_stored_key() -> Option<String> {
         home_path(".config/zhipu/api_key"),
     ] {
         if let Ok(text) = std::fs::read_to_string(&path) {
-            let key = text
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
+            let key = text.lines().next().unwrap_or("").trim().to_string();
             if !key.is_empty() {
                 return Some(key);
             }
@@ -686,9 +681,11 @@ impl ProviderUsage {
                 return Some(w);
             }
         }
-        self.windows
-            .iter()
-            .max_by(|a, b| a.used_fraction.partial_cmp(&b.used_fraction).unwrap_or(std::cmp::Ordering::Equal))
+        self.windows.iter().max_by(|a, b| {
+            a.used_fraction
+                .partial_cmp(&b.used_fraction)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     /// The limit the second ring shows: **the fullest of the ring's own model
@@ -698,20 +695,26 @@ impl ProviderUsage {
         if self.windows.len() < 2 {
             return None;
         }
-        let rest: Vec<&UsageWindow> =
-            self.windows.iter().filter(|w| w.id != headline.id).collect();
+        let rest: Vec<&UsageWindow> = self
+            .windows
+            .iter()
+            .filter(|w| w.id != headline.id)
+            .collect();
         let same_group: Vec<&UsageWindow> = rest
             .iter()
             .copied()
             .filter(|w| w.scope == headline.scope)
             .collect();
-        let pool = if same_group.is_empty() { rest } else { same_group };
-        pool.into_iter()
-            .max_by(|a, b| {
-                a.used_fraction
-                    .partial_cmp(&b.used_fraction)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        let pool = if same_group.is_empty() {
+            rest
+        } else {
+            same_group
+        };
+        pool.into_iter().max_by(|a, b| {
+            a.used_fraction
+                .partial_cmp(&b.used_fraction)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     pub fn provider(&self) -> Provider {
@@ -829,10 +832,7 @@ pub mod burn_rate {
             return if quarters == 4 {
                 crate::localization::t("about an hour").to_string()
             } else {
-                crate::localization::t_fmt(
-                    "about {n} minutes",
-                    &[(&(quarters * 15).to_string())],
-                )
+                crate::localization::t_fmt("about {n} minutes", &[(&(quarters * 15).to_string())])
             };
         }
         let hours = minutes as f64 / 60.0;
@@ -840,10 +840,7 @@ pub mod burn_rate {
         if halves == 2 {
             crate::localization::t("about an hour").to_string()
         } else {
-            crate::localization::t_fmt(
-                "about {n} hours",
-                &[(&(halves as f64 / 2.0).to_string())],
-            )
+            crate::localization::t_fmt("about {n} hours", &[(&(halves as f64 / 2.0).to_string())])
         }
     }
 }

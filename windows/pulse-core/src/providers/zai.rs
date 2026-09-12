@@ -13,9 +13,7 @@
 
 use super::{pasted_or_none, KeyRing, ProviderService};
 use crate::http::{number, HttpClient};
-use crate::model::{
-    AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow,
-};
+use crate::model::{AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow};
 use std::sync::Arc;
 
 pub struct ZaiService {
@@ -61,8 +59,11 @@ impl ZaiService {
         let host = host_for(provider);
         // What the user pasted wins, so a stale file cannot quietly override
         // a deliberate choice — the same order OpenCode Go's two sources take.
-        let key = pasted_or_none(keys.api_key(provider))
-            .or_else(|| (provider == Provider::GlmCoding).then(crate::model::glm_stored_key).flatten());
+        let key = pasted_or_none(keys.api_key(provider)).or_else(|| {
+            (provider == Provider::GlmCoding)
+                .then(crate::model::glm_stored_key)
+                .flatten()
+        });
         let Some(key) = key else {
             return ProviderUsage::unavailable(account, Unavailability::ApiKeyMissing);
         };
@@ -75,13 +76,14 @@ impl ZaiService {
         let header_refs: Vec<(&str, &str)> =
             headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let reply = match self
-            .http
-            .fetch_json(crate::http::Method::Get, &endpoint, &header_refs, None)
-        {
-            Ok(v) => v,
-            Err(reason) => return ProviderUsage::unavailable(account, reason),
-        };
+        let reply =
+            match self
+                .http
+                .fetch_json(crate::http::Method::Get, &endpoint, &header_refs, None)
+            {
+                Ok(v) => v,
+                Err(reason) => return ProviderUsage::unavailable(account, reason),
+            };
 
         // The envelope's own verdict. A key the service refuses arrives here
         // as a perfectly good HTTP 200, so this is the only place it can be
@@ -95,7 +97,8 @@ impl ZaiService {
 
         let data = reply.get("data");
         let windows = parse_limits(
-            data.map(|d| crate::http::array_field(d, "limits")).unwrap_or(&[]),
+            data.map(|d| crate::http::array_field(d, "limits"))
+                .unwrap_or(&[]),
             provider,
         );
         let mut usage = ProviderUsage::live_now(account, windows);
@@ -123,7 +126,11 @@ pub fn host_for(provider: Provider) -> &'static str {
 /// running subscription answers `500` — the vendor's generic number — with
 /// the coding-plan sentence, and 500 alone would say the service broke.
 pub fn envelope_problem(reply: &serde_json::Value) -> Unavailability {
-    let said = reply.get("msg").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+    let said = reply
+        .get("msg")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     // The phrase is embedded in English on both hosts.
     if said.contains("coding plan") {
@@ -134,8 +141,19 @@ pub fn envelope_problem(reply: &serde_json::Value) -> Unavailability {
     // is one vendor's private numbering, and the mainland host answers in
     // Chinese.
     let auth_words = [
-        "token", "auth", "key", "unauthor", "forbidden", "credential", "身份验证", "鉴权",
-        "认证", "令牌", "未授权", "无权限", "密钥",
+        "token",
+        "auth",
+        "key",
+        "unauthor",
+        "forbidden",
+        "credential",
+        "身份验证",
+        "鉴权",
+        "认证",
+        "令牌",
+        "未授权",
+        "无权限",
+        "密钥",
     ];
     if auth_words.iter().any(|w| said.contains(w)) {
         return Unavailability::ApiKeyRefused;
@@ -193,7 +211,10 @@ fn window(limit: &serde_json::Value, index: usize, provider: Provider) -> Option
         (type_ == "TIME_LIMIT").then(|| "MCP".to_string()),
         used / 100.0,
         minutes * 60,
-        limit.get("nextResetTime").and_then(number).map(|ms| ms as i64),
+        limit
+            .get("nextResetTime")
+            .and_then(number)
+            .map(|ms| ms as i64),
     );
     Some(window)
 }

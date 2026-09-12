@@ -122,7 +122,7 @@ fn dpapi_unprotect(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 unsafe fn drop_local(ptr: *mut u8) {
-    let _ = windows::Win32::Foundation::LocalFree(Some(
-        windows::Win32::Foundation::HLOCAL(ptr as *mut core::ffi::c_void),
-    ));
+    let _ = windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(
+        ptr as *mut core::ffi::c_void,
+    )));
 }

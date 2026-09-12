@@ -147,9 +147,7 @@ pub mod dock {
     /// items + the gaps between them.
     pub fn length(m: &Metrics, item_count: usize, axis: Axis) -> f64 {
         let count = item_count.max(1) as f64;
-        end_padding(m) * 2.0
-            + item_length(m, axis) * count
-            + m.s(item_spacing(m)) * (count - 1.0)
+        end_padding(m) * 2.0 + item_length(m, axis) * count + m.s(item_spacing(m)) * (count - 1.0)
     }
 
     /// The gap between the ring+label items, along the rail.

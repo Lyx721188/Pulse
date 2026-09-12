@@ -12,35 +12,33 @@ use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 
 use windows::core::{Interface, Result};
+use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FILL_MODE,
-    D2D1_FILL_MODE_ALTERNATE, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
-    D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_F,
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED,
+    D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE, D2D1_FILL_MODE_ALTERNATE, D2D1_GRADIENT_STOP,
+    D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_F,
 };
+use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
 };
-use windows::Win32::Graphics::Direct2D::*;
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+};
 use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
-};
-use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE_HARDWARE,
-};
-use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, ID3D11Device,
 };
 use windows::Win32::Graphics::DirectWrite::*;
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN,
 };
 use windows::Win32::Graphics::Dxgi::{
-    IDXGIDevice, IDXGIFactory2, IDXGISurface, IDXGISwapChain1, DXGI_PRESENT,
+    IDXGIDevice, IDXGIFactory2, IDXGISurface, IDXGISwapChain1, DXGI_PRESENT, DXGI_SCALING_STRETCH,
     DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-    DXGI_USAGE_RENDER_TARGET_OUTPUT, DXGI_SCALING_STRETCH,
+    DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
-use windows::Win32::Foundation::HMODULE;
 use windows_numerics::{Matrix3x2, Vector2};
 
 pub use crate::theme::Rgba;
@@ -152,7 +150,12 @@ impl D2DEngine {
         centered: bool,
         glyph_font: bool,
     ) -> Result<IDWriteTextFormat> {
-        let key = ((size_px * 4.0).round() as u32, weight.0 as u32, centered as u32, glyph_font as u32);
+        let key = (
+            (size_px * 4.0).round() as u32,
+            weight.0 as u32,
+            centered as u32,
+            glyph_font as u32,
+        );
         if let Some(existing) = self.text_formats.lock().unwrap().get(&key) {
             return Ok(existing.clone());
         }
@@ -177,7 +180,10 @@ impl D2DEngine {
                 let _ = format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 let _ = format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
-            self.text_formats.lock().unwrap().insert(key, format.clone());
+            self.text_formats
+                .lock()
+                .unwrap()
+                .insert(key, format.clone());
             Ok(format)
         }
     }
@@ -196,7 +202,11 @@ pub struct SwapchainCanvas {
     /// composition swap chain behind a DComp visual composites
     /// premultiplied alpha **over** the backdrop — the only route where
     /// Mica and transparency both survive.
-    _dcomp: Option<(IDCompositionDevice, IDCompositionTarget, IDCompositionVisual)>,
+    _dcomp: Option<(
+        IDCompositionDevice,
+        IDCompositionTarget,
+        IDCompositionVisual,
+    )>,
     pub rt: ID2D1DeviceContext,
     pub width: i32,
     pub height: i32,
@@ -206,7 +216,9 @@ impl SwapchainCanvas {
     pub fn new(hwnd: HWND, engine: &D2DEngine, width: i32, height: i32) -> Result<SwapchainCanvas> {
         unsafe {
             let dxgi_device: IDXGIDevice = engine.d3d.cast()?;
-            let rt = engine.device.CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?;
+            let rt = engine
+                .device
+                .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?;
             let _ = rt.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
             let _ = rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             let _ = rt.SetTransform(&identity_matrix());
@@ -228,9 +240,10 @@ impl SwapchainCanvas {
                 AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
                 ..Default::default()
             };
-            let swap_chain = engine
-                .dxgi_factory
-                .CreateSwapChainForComposition(&engine.d3d, &desc, None)?;
+            let swap_chain =
+                engine
+                    .dxgi_factory
+                    .CreateSwapChainForComposition(&engine.d3d, &desc, None)?;
 
             // Hand the swap chain to DWM as a composition visual rooted on
             // this window — Windows Terminal's route to a transparent
@@ -295,7 +308,9 @@ impl SwapchainCanvas {
                 bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
                 colorContext: ManuallyDrop::new(None),
             };
-            let bitmap = self.rt.CreateBitmapFromDxgiSurface(&surface, Some(&props))?;
+            let bitmap = self
+                .rt
+                .CreateBitmapFromDxgiSurface(&surface, Some(&props))?;
             self.rt.SetTarget(&bitmap);
         }
         Ok(())
@@ -323,7 +338,10 @@ impl SwapchainCanvas {
 /// The D3D device the swap chain and D2D share, with the immediate context
 /// it came with (D2D never touches it, but the API insists on handing it
 /// back).
-fn make_d3d_device() -> Result<(ID3D11Device, windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext)> {
+fn make_d3d_device() -> Result<(
+    ID3D11Device,
+    windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+)> {
     unsafe {
         let mut device = None;
         let mut context = None;
@@ -338,7 +356,8 @@ fn make_d3d_device() -> Result<(ID3D11Device, windows::Win32::Graphics::Direct3D
             None,
             Some(&mut context),
         )?;
-        let device = device.ok_or_else(|| windows::core::Error::from_hresult(windows::core::HRESULT(-1)))?;
+        let device =
+            device.ok_or_else(|| windows::core::Error::from_hresult(windows::core::HRESULT(-1)))?;
         let context = context
             .ok_or_else(|| windows::core::Error::from_hresult(windows::core::HRESULT(-1)))?;
         Ok((device, context))
@@ -411,7 +430,9 @@ impl<'a> Painter<'a> {
 
     pub fn draw_line(&self, from: Vector2, to: Vector2, brush: &ID2D1SolidColorBrush, width: f32) {
         unsafe {
-            let _ = self.rt.DrawLine(from, to, brush, width, Some(&self.engine.round_stroke));
+            let _ = self
+                .rt
+                .DrawLine(from, to, brush, width, Some(&self.engine.round_stroke));
         }
     }
 
@@ -439,9 +460,11 @@ impl<'a> Painter<'a> {
                     color: color(c.with_alpha(0.0)),
                 },
             ];
-            let stop_collection = self
-                .rt
-                .CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
+            let stop_collection = self.rt.CreateGradientStopCollection(
+                &stops,
+                D2D1_GAMMA_2_2,
+                D2D1_EXTEND_MODE_CLAMP,
+            )?;
             let props = D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES {
                 center,
                 gradientOriginOffset: point(0.0, 0.0),
@@ -482,11 +505,10 @@ impl<'a> Painter<'a> {
         // Private-use scalars are Fluent icon glyphs, not text — the
         // tofu boxes people see are what happens when they are drawn
         // with a face that does not carry them.
-        let glyph_font = text
-            .chars()
-            .any(|c| ('\u{E700}'..='\u{F8FF}').contains(&c));
+        let glyph_font = text.chars().any(|c| ('\u{E700}'..='\u{F8FF}').contains(&c));
         let Ok(format) =
-            self.engine.text_format(size_px, weight, halign == 1 && valign == 1, glyph_font)
+            self.engine
+                .text_format(size_px, weight, halign == 1 && valign == 1, glyph_font)
         else {
             return;
         };
@@ -721,7 +743,11 @@ pub fn arc_geometry(
 }
 
 /// A circular track: always full, always stroked, never animated.
-pub fn circle_geometry(engine: &D2DEngine, center: Vector2, radius: f32) -> Result<ID2D1PathGeometry> {
+pub fn circle_geometry(
+    engine: &D2DEngine,
+    center: Vector2,
+    radius: f32,
+) -> Result<ID2D1PathGeometry> {
     let mut builder = PathBuilder::new(engine, D2D1_FILL_MODE_ALTERNATE)?;
     let start = point(center.X, center.Y - radius);
     builder.begin_at(start.X as f64, start.Y as f64);

@@ -39,7 +39,10 @@ impl App {
     /// thread belongs to the WinUI settings host. `open_settings` asks the
     /// main thread to open the window; `shared_tx` hands back the state
     /// that window reads.
-    pub fn start(open_settings: Sender<()>, shared_tx: std::sync::mpsc::Sender<std::sync::Arc<crate::settings_app::Shared>>) -> App {
+    pub fn start(
+        open_settings: Sender<()>,
+        shared_tx: std::sync::mpsc::Sender<std::sync::Arc<crate::settings_app::Shared>>,
+    ) -> App {
         let (tx, rx) = channel::<AppMsg>();
 
         // The windows speak their own vocabularies; forwarder threads fold
@@ -53,43 +56,43 @@ impl App {
         std::thread::spawn({
             let tx = tx.clone();
             move || {
-            for event in panel_rx {
-                if tx.send(AppMsg::Panel(event)).is_err() {
-                    return;
+                for event in panel_rx {
+                    if tx.send(AppMsg::Panel(event)).is_err() {
+                        return;
+                    }
                 }
             }
-        }
         });
         std::thread::spawn({
             let tx = tx.clone();
             move || {
-            for action in settings_rx {
-                if tx.send(AppMsg::Settings(action)).is_err() {
-                    return;
+                for action in settings_rx {
+                    if tx.send(AppMsg::Settings(action)).is_err() {
+                        return;
+                    }
                 }
             }
-        }
         });
         std::thread::spawn({
             let tx = tx.clone();
             move || {
-            for command in tray_rx {
-                if tx.send(AppMsg::Tray(command)).is_err() {
-                    return;
+                for command in tray_rx {
+                    if tx.send(AppMsg::Tray(command)).is_err() {
+                        return;
+                    }
                 }
             }
-        }
         });
         std::thread::spawn({
             let tx = tx.clone();
             move || {
-            for tick in poll_rx {
-                let _ = tick;
-                if tx.send(AppMsg::StorePoll).is_err() {
-                    return;
+                for tick in poll_rx {
+                    let _ = tick;
+                    if tx.send(AppMsg::StorePoll).is_err() {
+                        return;
+                    }
                 }
             }
-        }
         });
 
         // First-run resolution happens exactly once, at launch, on the UI
@@ -191,17 +194,18 @@ impl App {
             }
             TrayCommand::RefreshAll => {
                 let accounts = pulse_core::settings::with(|s| {
-                    s.ordered_enabled().into_iter().map(|a| a.id()).collect::<Vec<_>>()
+                    s.ordered_enabled()
+                        .into_iter()
+                        .map(|a| a.id())
+                        .collect::<Vec<_>>()
                 });
                 self.refreshing.extend(accounts);
                 self.store.send(Command::RefreshAll);
                 self.mark_refreshing();
             }
-            TrayCommand::Exit => {
-                unsafe {
-                    PostQuitMessage(0);
-                }
-            }
+            TrayCommand::Exit => unsafe {
+                PostQuitMessage(0);
+            },
         }
     }
 
@@ -230,9 +234,11 @@ impl App {
             }
             SettingsAction::RefreshProvider(raw) => {
                 if let Some(provider) = Provider::from_raw(&raw) {
-                    self.refreshing.insert(pulse_core::model::AccountKey::primary(provider).id());
-                    self.store
-                        .send(Command::RefreshAccount(pulse_core::model::AccountKey::primary(provider)));
+                    self.refreshing
+                        .insert(pulse_core::model::AccountKey::primary(provider).id());
+                    self.store.send(Command::RefreshAccount(
+                        pulse_core::model::AccountKey::primary(provider),
+                    ));
                     self.mark_refreshing();
                 }
             }
@@ -256,8 +262,8 @@ impl App {
         let http = pulse_core::http::HttpClient::new();
         std::thread::spawn(move || {
             let run = || -> Result<String, String> {
-                let prompt = pulse_core::providers::device_login::start(&http)
-                    .map_err(|e| e.to_string())?;
+                let prompt =
+                    pulse_core::providers::device_login::start(&http).map_err(|e| e.to_string())?;
                 crate::clipboard::set_text(&prompt.user_code);
                 open_in_browser(&prompt.verification_url);
                 // The clipboard is the convenience, not the message: the
@@ -298,10 +304,7 @@ impl App {
                 }
                 Update::Alert(event) => {
                     let (title, text) = event.notification_text();
-                    let warning = !matches!(
-                        event,
-                        pulse_core::alerts::AlertEvent::Reset { .. }
-                    );
+                    let warning = !matches!(event, pulse_core::alerts::AlertEvent::Reset { .. });
                     self.tray.show_balloon(&title, &text, warning);
                 }
             }
@@ -316,7 +319,9 @@ impl App {
             .into_iter()
             .map(|account| {
                 let mut entry = match self.readings.get(&account.id()) {
-                    Some(reading) => RailEntry::from_reading(reading, &settings, settings.shows_remaining),
+                    Some(reading) => {
+                        RailEntry::from_reading(reading, &settings, settings.shows_remaining)
+                    }
                     None => RailEntry::placeholder(account.provider),
                 };
                 if self.refreshing.contains(&account.id()) {
@@ -348,14 +353,11 @@ impl App {
                             "{}{} · {}",
                             window.percent_text(false),
                             plan,
-                            pulse_core::timeutil::relative_text(
-                                reading.observed_at.unwrap_or(0)
-                            )
+                            pulse_core::timeutil::relative_text(reading.observed_at.unwrap_or(0))
                         ),
-                        None => reading
-                            .credit_balance
-                            .clone()
-                            .unwrap_or_else(|| pulse_core::localization::t("No reading").to_string()),
+                        None => reading.credit_balance.clone().unwrap_or_else(|| {
+                            pulse_core::localization::t("No reading").to_string()
+                        }),
                     }
                 }
                 State::Stale => {

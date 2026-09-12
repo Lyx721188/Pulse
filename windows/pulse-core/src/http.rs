@@ -70,9 +70,7 @@ impl HttpClient {
             let result = self.fetch_once(method, url, headers, body);
             match result {
                 Ok(value) => return Ok(value),
-                Err(Outcome::Unavailable(reason)) => {
-                    return Err(HttpFailure::Unavailable(reason))
-                }
+                Err(Outcome::Unavailable(reason)) => return Err(HttpFailure::Unavailable(reason)),
                 Err(Outcome::NotFound) => return Err(HttpFailure::NotFound),
                 Err(Outcome::Stumble(reason)) => {
                     last_error = reason;
@@ -184,9 +182,6 @@ pub fn array_field<'a>(value: &'a serde_json::Value, key: &str) -> &'a [serde_js
         .unwrap_or(&[])
 }
 
-pub fn object_field<'a>(
-    value: &'a serde_json::Value,
-    key: &str,
-) -> Option<&'a serde_json::Value> {
+pub fn object_field<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
     value.get(key).filter(|v| v.is_object())
 }

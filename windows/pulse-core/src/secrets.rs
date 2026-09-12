@@ -51,7 +51,9 @@ fn save(store: &KeyStore) {
         Ok(v) => v,
         Err(_) => return,
     };
-    let Some(blob) = dpapi_protect(&plain) else { return };
+    let Some(blob) = dpapi_protect(&plain) else {
+        return;
+    };
 
     let mut out = Vec::with_capacity(MAGIC.len() + blob.len());
     out.extend_from_slice(MAGIC);

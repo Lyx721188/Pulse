@@ -17,16 +17,18 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_BITMAP_PROPERTIES1, D2D1_BITMAP_OPTIONS_NONE, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-    ID2D1Bitmap, ID2D1DeviceContext,
+    ID2D1Bitmap, ID2D1DeviceContext, D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1,
+    D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_WICPixelFormat32bppPRGBA, IWICImagingFactory,
-    WICBitmapCacheOnDemand, WICBitmapDitherTypeNone, WICBitmapLockRead,
-    WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
+    WICBitmapCacheOnDemand, WICBitmapDitherTypeNone, WICBitmapLockRead, WICBitmapPaletteTypeCustom,
+    WICDecodeMetadataCacheOnDemand,
 };
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+};
 
 use crate::d2d::D2DEngine;
 use crate::theme::panel;
@@ -147,7 +149,9 @@ fn decode_tinted(
         let mut w = 0u32;
         let mut h = 0u32;
         source.GetSize(&mut w, &mut h).ok()?;
-        let lock = source.Lock(std::ptr::null(), WICBitmapLockRead.0 as u32).ok()?;
+        let lock = source
+            .Lock(std::ptr::null(), WICBitmapLockRead.0 as u32)
+            .ok()?;
         let mut stride = lock.GetStride().ok()?;
         let mut size = 0u32;
         let mut data: *mut u8 = std::ptr::null_mut();
@@ -182,7 +186,10 @@ fn decode_tinted(
         };
         let bitmap1 = rt
             .CreateBitmap(
-                windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U { width: w, height: h },
+                windows::Win32::Graphics::Direct2D::Common::D2D_SIZE_U {
+                    width: w,
+                    height: h,
+                },
                 Some(out.as_ptr() as *const core::ffi::c_void),
                 w * 4,
                 &props,

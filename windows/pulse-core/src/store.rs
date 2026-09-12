@@ -94,7 +94,15 @@ fn worker(cmd_rx: Receiver<Command>, upd_tx: Sender<Update>) {
         match cmd_rx.recv_timeout(std::time::Duration::from_millis(wait)) {
             Ok(Command::Shutdown) => return,
             Ok(Command::RefreshAll) => {
-                run_pass(&services, &mut cache, &mut alerts, &mut state, &keys, &upd_tx, None);
+                run_pass(
+                    &services,
+                    &mut cache,
+                    &mut alerts,
+                    &mut state,
+                    &keys,
+                    &upd_tx,
+                    None,
+                );
                 next_pass_at = schedule_next(&state);
             }
             Ok(Command::RefreshAccount(account)) => {
@@ -124,7 +132,15 @@ fn worker(cmd_rx: Receiver<Command>, upd_tx: Sender<Update>) {
         // The schedule is one-shot: `schedule_next` runs only when a pass
         // finishes, so a stalled pass cannot take the cadence with it.
         if crate::timeutil::now_ms() >= next_pass_at {
-            run_pass(&services, &mut cache, &mut alerts, &mut state, &keys, &upd_tx, None);
+            run_pass(
+                &services,
+                &mut cache,
+                &mut alerts,
+                &mut state,
+                &keys,
+                &upd_tx,
+                None,
+            );
             next_pass_at = schedule_next(&state);
         }
     }
@@ -182,9 +198,7 @@ fn schedule_next(state: &HashMap<String, AccountState>) -> i64 {
         let mut earliest = now + FLOOR * 1000;
         for account in settings.ordered_enabled() {
             let interval = match state.get(&account.id()) {
-                Some(entry) => {
-                    interval_for(settings, &account.provider, entry.stable_passes)
-                }
+                Some(entry) => interval_for(settings, &account.provider, entry.stable_passes),
                 None => FLOOR,
             };
             let due_at = state
@@ -275,7 +289,9 @@ fn run_pass(
         // last good figures with a date, and a live reading banks.
         let reconciled = cache.reconciled(fetched);
 
-        let old = state.get(&account.id()).and_then(|entry| entry.last_windows.clone());
+        let old = state
+            .get(&account.id())
+            .and_then(|entry| entry.last_windows.clone());
         let old_reading = readings_snapshot(alerts, &account);
         let events = crate::alerts::evaluate(alerts, old_reading.as_ref(), Some(&reconciled));
         let _ = old;
@@ -301,13 +317,11 @@ fn record_pass(
     account: &AccountKey,
     reading: &ProviderUsage,
 ) {
-    let entry = state
-        .entry(account.id())
-        .or_insert_with(|| AccountState {
-            asked_at: crate::timeutil::now_ms(),
-            stable_passes: 0,
-            last_windows: None,
-        });
+    let entry = state.entry(account.id()).or_insert_with(|| AccountState {
+        asked_at: crate::timeutil::now_ms(),
+        stable_passes: 0,
+        last_windows: None,
+    });
     if !matches!(reading.state, State::Live) {
         return;
     }
@@ -330,7 +344,11 @@ fn readings_snapshot(
     alerts.last_reading(account)
 }
 
-fn readings_insert(alerts: &mut crate::alerts::AlertMemory, account: &AccountKey, reading: &ProviderUsage) {
+fn readings_insert(
+    alerts: &mut crate::alerts::AlertMemory,
+    account: &AccountKey,
+    reading: &ProviderUsage,
+) {
     alerts.remember_reading(account, reading);
 }
 

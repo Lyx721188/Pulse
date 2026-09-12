@@ -8,9 +8,7 @@
 
 use super::{KeyRing, ProviderService};
 use crate::http::{bool_field, number, number_field, string_field, HttpClient};
-use crate::model::{
-    AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow,
-};
+use crate::model::{AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow};
 use std::sync::Arc;
 
 const ENDPOINT: &str = "https://api.github.com/copilot_internal/user";
@@ -62,16 +60,17 @@ impl ProviderService for CopilotService {
         let header_refs: Vec<(&str, &str)> =
             headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let root = match self
-            .http
-            .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
-        {
-            Ok(v) => v,
-            Err(Unavailability::ApiKeyRefused) => {
-                return ProviderUsage::unavailable(account, Unavailability::SignedOut)
-            }
-            Err(reason) => return ProviderUsage::unavailable(account, reason),
-        };
+        let root =
+            match self
+                .http
+                .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
+            {
+                Ok(v) => v,
+                Err(Unavailability::ApiKeyRefused) => {
+                    return ProviderUsage::unavailable(account, Unavailability::SignedOut)
+                }
+                Err(reason) => return ProviderUsage::unavailable(account, reason),
+            };
 
         let windows = parse_windows(&root);
         let mut usage = ProviderUsage::live_now(account, windows);
@@ -130,7 +129,11 @@ fn window(
         && !unlimited
         && entitlement <= 0.0
         && snapshot.get("remaining").and_then(number).unwrap_or(0.0) <= 0.0
-        && snapshot.get("percent_remaining").and_then(number).unwrap_or(0.0) >= 100.0
+        && snapshot
+            .get("percent_remaining")
+            .and_then(number)
+            .unwrap_or(0.0)
+            >= 100.0
     {
         return None;
     }
@@ -157,7 +160,8 @@ fn window(
     // permitted keeps working past its included share and is billed for it —
     // reading `overage_count` as spent painted a red ring for someone who
     // had deliberately paid to carry on.
-    window.is_exhausted = remaining <= 0.0 && !bool_field(snapshot, "overage_permitted").unwrap_or(false);
+    window.is_exhausted =
+        remaining <= 0.0 && !bool_field(snapshot, "overage_permitted").unwrap_or(false);
     Some(window)
 }
 

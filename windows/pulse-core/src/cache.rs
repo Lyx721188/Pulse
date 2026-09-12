@@ -55,7 +55,8 @@ impl UsageCache {
             // `.live` is not the same as "newest": a route can call its own
             // capture live while an earlier reading banked later.
             if let Some(banked) = self.reading(&fetched.account) {
-                if let (Some(banked_at), Some(taken_at)) = (banked.observed_at, fetched.observed_at) {
+                if let (Some(banked_at), Some(taken_at)) = (banked.observed_at, fetched.observed_at)
+                {
                     if taken_at < banked_at {
                         return banked;
                     }
@@ -163,7 +164,9 @@ impl UsageCache {
     fn write(&mut self, all: HashMap<String, Stored>) {
         let dir = crate::data_dir();
         let _ = std::fs::create_dir_all(&dir);
-        if let Ok(text) = serde_json::to_string(&StoredMap { entries: all.clone() }) {
+        if let Ok(text) = serde_json::to_string(&StoredMap {
+            entries: all.clone(),
+        }) {
             let tmp = self.file.with_extension("json.tmp");
             if std::fs::write(&tmp, text).is_ok() {
                 let _ = std::fs::rename(&tmp, &self.file);

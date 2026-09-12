@@ -22,7 +22,9 @@ pub fn data_dir() -> std::path::PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
             let home = std::env::var("USERPROFILE").unwrap_or_default();
-            std::path::PathBuf::from(home).join("AppData").join("Roaming")
+            std::path::PathBuf::from(home)
+                .join("AppData")
+                .join("Roaming")
         });
     base.join("Pulse")
 }

@@ -7,8 +7,8 @@ use std::sync::mpsc::Sender;
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
-    DefSubclassProc, SetWindowSubclass, Shell_NotifyIconW, NIF_ICON,
-    NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    DefSubclassProc, SetWindowSubclass, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE,
+    NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -44,7 +44,8 @@ fn build_icon() -> HICON {
         let hdc = windows::Win32::Graphics::Gdi::CreateCompatibleDC(None);
         let mut bmi = windows::Win32::Graphics::Gdi::BITMAPINFO {
             bmiHeader: windows::Win32::Graphics::Gdi::BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>() as u32,
+                biSize: std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>()
+                    as u32,
                 biWidth: size,
                 biHeight: -size,
                 biPlanes: 1,
@@ -88,7 +89,7 @@ fn build_icon() -> HICON {
                     255
                 };
                 *pixels.add(y * size as usize + x) = [
-                    0, // blue
+                    0,   // blue
                     230, // green (0.90)
                     140, // red (0.55)
                     ((alpha as f32 * fade as f32) / 255.0) as u8,
@@ -205,7 +206,12 @@ impl Drop for TrayIcon {
     }
 }
 
-unsafe extern "system" fn tray_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn tray_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     let state = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     if state == 0 {
         return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -285,12 +291,7 @@ unsafe fn show_menu(hwnd: HWND, commands: &Sender<TrayCommand>) {
 /// even if a future window takes the class over.
 pub fn install_subclass(hwnd: HWND) {
     unsafe {
-        let _ = SetWindowSubclass(
-            hwnd,
-            Some(subclass_proc),
-            1,
-            0,
-        );
+        let _ = SetWindowSubclass(hwnd, Some(subclass_proc), 1, 0);
     }
 }
 

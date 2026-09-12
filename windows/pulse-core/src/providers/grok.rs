@@ -11,9 +11,7 @@
 
 use super::{KeyRing, ProviderService};
 use crate::http::{number, string_field, HttpClient};
-use crate::model::{
-    AccountKey, Kind, Provider, ProviderUsage, Unavailability, UsageWindow,
-};
+use crate::model::{AccountKey, Kind, Provider, ProviderUsage, Unavailability, UsageWindow};
 use std::sync::Arc;
 
 const BILLING_ENDPOINT: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
@@ -36,9 +34,7 @@ impl ProviderService for GrokService {
         let account = AccountKey::primary(Provider::Grok);
         match stored_login() {
             Login::None => ProviderUsage::unavailable(account, Unavailability::GrokSignInRequired),
-            Login::Expired => {
-                ProviderUsage::unavailable(account, Unavailability::GrokLoginExpired)
-            }
+            Login::Expired => ProviderUsage::unavailable(account, Unavailability::GrokLoginExpired),
             Login::Usable(token) => self.fetch_with_token(&account, &token),
         }
     }
@@ -67,10 +63,12 @@ impl GrokService {
         let header_refs: Vec<(&str, &str)> =
             headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let root = match self
-            .http
-            .fetch_json(crate::http::Method::Get, BILLING_ENDPOINT, &header_refs, None)
-        {
+        let root = match self.http.fetch_json(
+            crate::http::Method::Get,
+            BILLING_ENDPOINT,
+            &header_refs,
+            None,
+        ) {
             Ok(v) => v,
             Err(Unavailability::ApiKeyRefused) => {
                 return ProviderUsage::unavailable(
@@ -149,7 +147,11 @@ fn stored_login() -> Login {
     let mut best: Option<(String, i64)> = None;
 
     for (_key, entry) in map {
-        let Some(token) = entry.get("key").and_then(|v| v.as_str()).filter(|t| !t.is_empty()) else {
+        let Some(token) = entry
+            .get("key")
+            .and_then(|v| v.as_str())
+            .filter(|t| !t.is_empty())
+        else {
             continue;
         };
         saw_entry = true;

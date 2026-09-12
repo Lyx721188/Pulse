@@ -17,8 +17,8 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use windows_reactor::*;
 use windows_reactor::SlotsControl;
+use windows_reactor::*;
 
 use pulse_core::model::Provider;
 
@@ -484,13 +484,7 @@ impl SettingsApp {
         });
     }
 
-    fn toggle(
-        &self,
-        key: ToggleKey,
-        label: &str,
-        on: bool,
-        context: &ViewContext<Self>,
-    ) -> View {
+    fn toggle(&self, key: ToggleKey, label: &str, on: bool, context: &ViewContext<Self>) -> View {
         row((
             TextBlock::new().text(pulse_core::localization::t(label)),
             ToggleSwitch::new()
@@ -633,12 +627,7 @@ impl SettingsApp {
             .into()
     }
 
-    fn provider_row(
-        &self,
-        index: usize,
-        provider: Provider,
-        context: &ViewContext<Self>,
-    ) -> View {
+    fn provider_row(&self, index: usize, provider: Provider, context: &ViewContext<Self>) -> View {
         let raw = provider.raw();
         let enabled = pulse_core::settings::with(|s| s.enabled_accounts.contains(raw));
 
@@ -651,7 +640,11 @@ impl SettingsApp {
                         .text(provider.display_name())
                         .font_size(15.0)
                         .font_weight(FontWeight::SEMI_BOLD),
-                    self.muted(provider.windows_gap().unwrap_or("Not available on Windows.")),
+                    self.muted(
+                        provider
+                            .windows_gap()
+                            .unwrap_or("Not available on Windows."),
+                    ),
                 ))
                 .into();
         }
@@ -704,9 +697,9 @@ impl SettingsApp {
                         PasswordBox::new()
                             .password(stored)
                             .placeholder_text(pulse_core::localization::t("Paste the API key"))
-                            .on_password_changed(context.callback(move |text| {
-                                Message::KeyEdit(index, text)
-                            })),
+                            .on_password_changed(
+                                context.callback(move |text| Message::KeyEdit(index, text)),
+                            ),
                         row((
                             Button::new()
                                 .on_click(context.message(Message::Save(index)))
@@ -740,14 +733,9 @@ impl SettingsApp {
         ));
         let rows = std::iter::once(("__heading", heading("Accounts").into()))
             .chain(std::iter::once(("__note", note.into())))
-            .chain(
-                all_providers()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, provider)| {
-                        (provider.raw(), self.provider_row(index, *provider, context))
-                    }),
-            );
+            .chain(all_providers().iter().enumerate().map(|(index, provider)| {
+                (provider.raw(), self.provider_row(index, *provider, context))
+            }));
         StackPanel::new().spacing(14.0).keyed_children(rows)
     }
 

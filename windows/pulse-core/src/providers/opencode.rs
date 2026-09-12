@@ -7,9 +7,7 @@
 
 use super::{pasted_or_none, KeyRing, ProviderService};
 use crate::http::{number, string_field, HttpClient};
-use crate::model::{
-    AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow,
-};
+use crate::model::{AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow};
 use std::sync::Arc;
 
 const ENDPOINT: &str = "https://opencode.ai/zen/go/v1/usage";
@@ -45,13 +43,14 @@ impl ProviderService for OpenCodeService {
         let header_refs: Vec<(&str, &str)> =
             headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let root = match self
-            .http
-            .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
-        {
-            Ok(v) => v,
-            Err(reason) => return ProviderUsage::unavailable(account, reason),
-        };
+        let root =
+            match self
+                .http
+                .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
+            {
+                Ok(v) => v,
+                Err(reason) => return ProviderUsage::unavailable(account, reason),
+            };
 
         let windows = parse_windows(&root);
         let mut usage = ProviderUsage::live_now(account, windows);
@@ -91,8 +90,10 @@ pub fn parse_windows(root: &serde_json::Value) -> Vec<UsageWindow> {
         // The provider's own verdict, not one inferred from the percentage.
         // Anything other than "ok" is treated as spent — erring towards
         // "you're blocked" is the safer way to be wrong.
-        window.is_exhausted =
-            string_field(reported, "status").unwrap_or("ok").to_lowercase() != "ok";
+        window.is_exhausted = string_field(reported, "status")
+            .unwrap_or("ok")
+            .to_lowercase()
+            != "ok";
         Some(window)
     })
     .collect()

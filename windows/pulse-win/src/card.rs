@@ -43,7 +43,11 @@ pub fn body_size(m: &Metrics, windows_count: usize, footnote: bool, forecast: bo
             0.0
         }
         // Room for a wrapped unavailable message even with no rows.
-        .max(m.s(card::PADDING) * 2.0 + m.s(card::HEADER_HEIGHT) + m.s(card::ROW_TEXT_LINE_HEIGHT) * 4.0);
+        .max(
+            m.s(card::PADDING) * 2.0
+                + m.s(card::HEADER_HEIGHT)
+                + m.s(card::ROW_TEXT_LINE_HEIGHT) * 4.0,
+        );
     (w, h)
 }
 
@@ -191,7 +195,9 @@ pub fn draw_card(
                     &[&pulse_core::timeutil::relative_text(at)],
                 )
             })
-            .unwrap_or_else(|| pulse_core::localization::t("Reading may be out of date").to_string());
+            .unwrap_or_else(|| {
+                pulse_core::localization::t("Reading may be out of date").to_string()
+            });
         let footnote_brush = painter.brush(palette.text_disabled)?;
         cy += m.s(card::CONTENT_SPACING);
         painter.text(
@@ -258,7 +264,14 @@ fn draw_progress_row(
     let bar_h = m.s(card::PROGRESS_BAR_HEIGHT) as f32;
     let bar_y = (*cy + m.s(card::PROGRESS_BAR_HEIGHT) / 2.0) as f32;
     let track_brush = painter.brush(palette.bar_track)?;
-    draw_capsule(painter, x as f32, bar_y - bar_h / 2.0, width as f32, bar_h, &track_brush);
+    draw_capsule(
+        painter,
+        x as f32,
+        bar_y - bar_h / 2.0,
+        width as f32,
+        bar_h,
+        &track_brush,
+    );
 
     let fill_w = (width * progress) as f32;
     if progress > 0.0 {
@@ -266,7 +279,14 @@ fn draw_progress_row(
         // The smallest non-zero reading still puts a dot of colour on
         // screen — the same rule the ring's round cap follows.
         let fill_w = fill_w.max(bar_h).min(width as f32);
-        draw_capsule(painter, x as f32, bar_y - bar_h / 2.0, fill_w, bar_h, &fill_brush);
+        draw_capsule(
+            painter,
+            x as f32,
+            bar_y - bar_h / 2.0,
+            fill_w,
+            bar_h,
+            &fill_brush,
+        );
     }
     *cy += m.s(card::PROGRESS_BAR_HEIGHT) + m.s(card::ROW_INTERNAL_SPACING);
 
@@ -285,7 +305,12 @@ fn draw_progress_row(
     })?;
     painter.text(
         &figure_label,
-        crate::d2d::rect(x as f32, *cy as f32, (width * 0.45) as f32, m.s(card::ROW_TEXT_LINE_HEIGHT) as f32),
+        crate::d2d::rect(
+            x as f32,
+            *cy as f32,
+            (width * 0.45) as f32,
+            m.s(card::ROW_TEXT_LINE_HEIGHT) as f32,
+        ),
         m.s(card::ROW_FONT) as f32,
         windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_MEDIUM,
         &figure_brush,
@@ -317,7 +342,9 @@ fn draw_progress_row(
     // figures above it, absent far more often than present — and the
     // verdict without the time when the time is past the horizon.
     if data.shows_forecast && !spent_color {
-        if let Some(burn) = pulse_core::model::burn_rate::reading(window, pulse_core::timeutil::now_ms()) {
+        if let Some(burn) =
+            pulse_core::model::burn_rate::reading(window, pulse_core::timeutil::now_ms())
+        {
             *cy += m.s(card::ROW_INTERNAL_SPACING);
             let (text, color) = if let Some(ms) = burn.time_to_exhaustion_ms {
                 (
@@ -341,7 +368,12 @@ fn draw_progress_row(
             let burn_brush = painter.brush(color)?;
             painter.text(
                 &text,
-                crate::d2d::rect(x as f32, *cy as f32, width as f32, m.s(card::ROW_TEXT_LINE_HEIGHT) as f32),
+                crate::d2d::rect(
+                    x as f32,
+                    *cy as f32,
+                    width as f32,
+                    m.s(card::ROW_TEXT_LINE_HEIGHT) as f32,
+                ),
                 m.s(card::ROW_FONT) as f32,
                 DWRITE_FONT_WEIGHT_NORMAL,
                 &burn_brush,
@@ -373,7 +405,12 @@ fn draw_capsule(
     painter.fill_ellipse(point(x + r, y + r), r, brush);
     painter.fill_ellipse(point(x + width - r, y + r), r, brush);
     painter.fill_rounded_rect(
-        crate::d2d::rect((x + r) as f32, y as f32, (width - height) as f32, height as f32),
+        crate::d2d::rect(
+            (x + r) as f32,
+            y as f32,
+            (width - height) as f32,
+            height as f32,
+        ),
         (height / 2.0) as f32,
         brush,
     );
@@ -392,7 +429,12 @@ fn draw_value_row(
     let title_brush = painter.brush(palette.text_primary)?;
     painter.text(
         title,
-        crate::d2d::rect(x as f32, *cy as f32, (width * 0.5) as f32, m.s(card::ROW_TEXT_LINE_HEIGHT) as f32),
+        crate::d2d::rect(
+            x as f32,
+            *cy as f32,
+            (width * 0.5) as f32,
+            m.s(card::ROW_TEXT_LINE_HEIGHT) as f32,
+        ),
         m.s(card::ROW_FONT) as f32,
         DWRITE_FONT_WEIGHT_NORMAL,
         &title_brush,
@@ -422,7 +464,10 @@ fn draw_value_row(
 /// never a sort key dressed as a measurement.
 fn reset_text(window: &pulse_core::model::UsageWindow) -> String {
     match window.resets_at {
-        Some(at) => pulse_core::localization::t_fmt("Resets {time}", &[&pulse_core::timeutil::reset_text(at)]),
+        Some(at) => pulse_core::localization::t_fmt(
+            "Resets {time}",
+            &[&pulse_core::timeutil::reset_text(at)],
+        ),
         None => {
             if window.reports_length {
                 window.length_text()
@@ -468,7 +513,12 @@ fn draw_wrapped(
     for (i, text) in lines.iter().enumerate() {
         painter.text(
             text,
-            crate::d2d::rect(x as f32, (*cy + lh * i as f64) as f32, width as f32, lh as f32),
+            crate::d2d::rect(
+                x as f32,
+                (*cy + lh * i as f64) as f32,
+                width as f32,
+                lh as f32,
+            ),
             font as f32,
             DWRITE_FONT_WEIGHT_NORMAL,
             brush,

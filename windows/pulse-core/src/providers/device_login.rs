@@ -48,13 +48,21 @@ impl std::fmt::Display for DeviceLoginError {
                 write!(f, "{}", crate::localization::t("Sign-in was cancelled."))
             }
             DeviceLoginError::TimedOut => {
-                write!(f, "{}", crate::localization::t("The browser didn't come back."))
+                write!(
+                    f,
+                    "{}",
+                    crate::localization::t("The browser didn't come back.")
+                )
             }
         }
     }
 }
 
-fn post(http: &HttpClient, url: &str, body: &serde_json::Value) -> Result<serde_json::Value, DeviceLoginError> {
+fn post(
+    http: &HttpClient,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, DeviceLoginError> {
     let headers = [
         ("Accept", "application/json"),
         // Without this GitHub answers form-encoded, which parses as nothing.

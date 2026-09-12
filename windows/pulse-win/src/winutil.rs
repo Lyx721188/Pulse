@@ -9,8 +9,10 @@ use windows::Win32::Graphics::Gdi::{
     MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::{
+    GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 
 pub const WM_APP_TRAY: u32 = WM_APP + 1;
 pub const WM_APP_STORE: u32 = WM_APP + 2;
@@ -76,9 +78,7 @@ pub fn monitor_name(monitor: HMONITOR) -> String {
 }
 
 pub fn monitor_from_hwnd(hwnd: HWND) -> HMONITOR {
-    unsafe {
-        MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
-    }
+    unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) }
 }
 
 /// One-shot single-instance check. A second launch reports and exits.

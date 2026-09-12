@@ -4,8 +4,8 @@
 //! and DeepSeek's balance-only denominators.
 
 use pulse_core::model::{AccountKey, Kind, Provider, ProviderUsage, UsageWindow};
-use pulse_core::providers::zai;
 use pulse_core::providers::deepseek::{self, Purse};
+use pulse_core::providers::zai;
 
 fn window(used: f64) -> UsageWindow {
     window_with(used, "w", Kind::FiveHour, None)
@@ -17,7 +17,11 @@ fn window_with(used: f64, id: &str, kind: Kind, scope: Option<&str>) -> UsageWin
         kind,
         scope.map(|s| s.to_string()),
         used,
-        if matches!(kind, Kind::FiveHour) { 5 * 3_600 } else { 7 * 86_400 },
+        if matches!(kind, Kind::FiveHour) {
+            5 * 3_600
+        } else {
+            7 * 86_400
+        },
         None,
     )
 }
@@ -54,13 +58,27 @@ fn counting_down_gets_the_same_rule_at_both_ends() {
 fn the_window_clock_needs_a_length_the_provider_actually_stated() {
     let now = pulse_core::timeutil::now_ms();
     // Halfway: the reset lands 2.5 hours out of a five-hour window.
-    let halfway = UsageWindow::new("w", Kind::FiveHour, None, 0.5, 5 * 3_600, Some(now + 9_000 * 1_000));
+    let halfway = UsageWindow::new(
+        "w",
+        Kind::FiveHour,
+        None,
+        0.5,
+        5 * 3_600,
+        Some(now + 9_000 * 1_000),
+    );
     let elapsed = halfway.elapsed_fraction(now).expect("halfway elapsed");
     assert!((elapsed - 0.5).abs() < 0.01);
 
     // A sort key is also a positive number. Dividing by one draws an arc
     // nobody reported.
-    let mut sort_key_only = UsageWindow::new("w", Kind::FiveHour, None, 0.5, 3_600, Some(now + 3_600 * 1_000));
+    let mut sort_key_only = UsageWindow::new(
+        "w",
+        Kind::FiveHour,
+        None,
+        0.5,
+        3_600,
+        Some(now + 3_600 * 1_000),
+    );
     sort_key_only.reports_length = false;
     assert_eq!(sort_key_only.elapsed_fraction(now), None);
 
@@ -235,7 +253,13 @@ fn chinese_wording_carries_even_when_the_code_is_unknown() {
     // The code list cannot be complete — it is one vendor's private
     // numbering and is not published in full — so the words have to work
     // on their own.
-    for said in ["鉴权失败", "认证信息有误", "未授权的请求", "密钥无效", "无权限访问该接口"] {
+    for said in [
+        "鉴权失败",
+        "认证信息有误",
+        "未授权的请求",
+        "密钥无效",
+        "无权限访问该接口",
+    ] {
         assert_eq!(
             zai::envelope_problem(&zai_reply(Some(12_345), Some(said))),
             pulse_core::model::Unavailability::ApiKeyRefused,
@@ -354,7 +378,10 @@ fn balance_only_produces_no_window_at_all() {
     // `balanceOnly` means there is no denominator to draw, and the rail
     // shows the money in place of a percentage.
     let windows = deepseek::windows_for(
-        &Purse { currency: "CNY".into(), total: 1_234.5 },
+        &Purse {
+            currency: "CNY".into(),
+            total: 1_234.5,
+        },
         "balanceOnly",
         None,
         0.0,
@@ -367,7 +394,10 @@ fn balance_only_produces_no_window_at_all() {
 #[test]
 fn the_budget_basis_measures_against_your_budget() {
     let windows = deepseek::windows_for(
-        &Purse { currency: "CNY".into(), total: 25.0 },
+        &Purse {
+            currency: "CNY".into(),
+            total: 25.0,
+        },
         "budget",
         Some(100.0),
         0.0,
@@ -377,13 +407,19 @@ fn the_budget_basis_measures_against_your_budget() {
     assert_eq!(windows.len(), 1);
     assert!((windows[0].used_fraction - 0.75).abs() < 1e-9);
     // The denominator was inferred, and says where it came from.
-    assert_eq!(windows[0].estimate.as_ref().map(|e| e.token()), Some("yourBudget"));
+    assert_eq!(
+        windows[0].estimate.as_ref().map(|e| e.token()),
+        Some("yourBudget")
+    );
 }
 
 #[test]
 fn a_budget_of_zero_or_less_is_not_a_denominator() {
     let windows = deepseek::windows_for(
-        &Purse { currency: "CNY".into(), total: 25.0 },
+        &Purse {
+            currency: "CNY".into(),
+            total: 25.0,
+        },
         "budget",
         Some(0.0),
         0.0,
@@ -397,7 +433,10 @@ fn a_budget_of_zero_or_less_is_not_a_denominator() {
 fn a_deepseek_window_has_no_length_and_no_reset_ever() {
     // Balance is prepaid credit, which is not a limit: it never turns over.
     let windows = deepseek::windows_for(
-        &Purse { currency: "CNY".into(), total: 10.0 },
+        &Purse {
+            currency: "CNY".into(),
+            total: 10.0,
+        },
         "sinceTopUp",
         None,
         90.0,
@@ -408,5 +447,8 @@ fn a_deepseek_window_has_no_length_and_no_reset_ever() {
     assert!(!windows[0].reports_length);
     assert_eq!(windows[0].resets_at, None);
     assert!(matches!(windows[0].kind, Kind::Balance));
-    assert_eq!(windows[0].estimate.as_ref().map(|e| e.token()), Some("sinceTopUp"));
+    assert_eq!(
+        windows[0].estimate.as_ref().map(|e| e.token()),
+        Some("sinceTopUp")
+    );
 }

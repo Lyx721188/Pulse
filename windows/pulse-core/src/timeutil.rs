@@ -22,7 +22,10 @@ pub fn parse_iso8601_ms(text: &str) -> Option<i64> {
     // month" means when the reply never said a zone.
     if text.len() == 10 && text.as_bytes()[4] == b'-' {
         let date = chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d").ok()?;
-        return Some(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?).timestamp_millis());
+        return Some(
+            Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?)
+                .timestamp_millis(),
+        );
     }
 
     DateTime::parse_from_rfc3339(text)
@@ -77,8 +80,7 @@ pub fn relative_text(observed_ms: i64) -> String {
 }
 
 pub fn iso8601_utc(ms: i64) -> String {
-    Utc
-        .timestamp_millis_opt(ms)
+    Utc.timestamp_millis_opt(ms)
         .single()
         .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
         .unwrap_or_default()

@@ -54,7 +54,10 @@ impl DeepSeekService {
     pub fn fetch_with_basis(&self, keys: &KeyRing, basis: &DeepSeekBasis) -> ProviderUsage {
         let account = AccountKey::primary(Provider::DeepSeek);
         let Some(key) = pasted_or_none(keys.api_key(Provider::DeepSeek)) else {
-            return ProviderUsage::unavailable(account, crate::model::Unavailability::ApiKeyMissing);
+            return ProviderUsage::unavailable(
+                account,
+                crate::model::Unavailability::ApiKeyMissing,
+            );
         };
 
         let headers = [
@@ -64,13 +67,14 @@ impl DeepSeekService {
         let header_refs: Vec<(&str, &str)> =
             headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let reply = match self
-            .http
-            .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
-        {
-            Ok(v) => v,
-            Err(reason) => return ProviderUsage::unavailable(account, reason),
-        };
+        let reply =
+            match self
+                .http
+                .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
+            {
+                Ok(v) => v,
+                Err(reason) => return ProviderUsage::unavailable(account, reason),
+            };
 
         let is_available = reply.get("is_available").and_then(|v| v.as_bool());
         let Some(purse) = purse(&reply, basis.currency.as_deref()) else {
@@ -99,7 +103,11 @@ impl DeepSeekService {
 
         let mut usage = ProviderUsage::live_now(account, windows);
         usage.origin = Some(self.origin_token().to_string());
-        usage.credit_balance = Some(format!("{:.2}{}", purse.total, currency_suffix(&purse.currency)));
+        usage.credit_balance = Some(format!(
+            "{:.2}{}",
+            purse.total,
+            currency_suffix(&purse.currency)
+        ));
         usage.credit_remaining = Some(CreditAmount {
             amount: purse.total,
             currency: purse.currency.clone(),
@@ -137,10 +145,7 @@ fn purse(reply: &serde_json::Value, preferring: Option<&str>) -> Option<Purse> {
             });
         }
     }
-    let chosen = purses
-        .iter()
-        .find(|p| p.total > 0.0)
-        .unwrap_or(&purses[0]);
+    let chosen = purses.iter().find(|p| p.total > 0.0).unwrap_or(&purses[0]);
     Some(Purse {
         currency: chosen.currency.clone(),
         total: chosen.total,
@@ -179,27 +184,23 @@ pub fn windows_for(
 ) -> Vec<UsageWindow> {
     let measured: Option<(f64, Estimate)> = match basis {
         "balanceOnly" => None,
-        "budget" => budget
-            .filter(|b| b.is_finite() && *b > 0.0)
-            .map(|budget| (((budget - purse.total) / budget).clamp(0.0, 1.0), Estimate::YourBudget)),
+        "budget" => budget.filter(|b| b.is_finite() && *b > 0.0).map(|budget| {
+            (
+                ((budget - purse.total) / budget).clamp(0.0, 1.0),
+                Estimate::YourBudget,
+            )
+        }),
         // "sinceTopUp" and anything unrecognised: the measured default.
-        _ => (peak > 0.0).then(|| {
-            ((peak - purse.total) / peak).clamp(0.0, 1.0)
-        }).map(|f| (f, Estimate::SinceTopUp)),
+        _ => (peak > 0.0)
+            .then(|| ((peak - purse.total) / peak).clamp(0.0, 1.0))
+            .map(|f| (f, Estimate::SinceTopUp)),
     };
 
     let Some((fraction, estimate)) = measured else {
         return Vec::new();
     };
 
-    let mut window = UsageWindow::new(
-        "balance",
-        Kind::Balance,
-        None,
-        fraction,
-        30 * 86_400,
-        None,
-    );
+    let mut window = UsageWindow::new("balance", Kind::Balance, None, fraction, 30 * 86_400, None);
     window.reports_length = false;
     window.estimate = Some(estimate);
     // **DeepSeek's own word**, not the arithmetic: `is_available` is the

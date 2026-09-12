@@ -11,9 +11,7 @@
 
 use super::{KeyRing, ProviderService};
 use crate::http::{number, object_field, string_field, HttpClient};
-use crate::model::{
-    AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow,
-};
+use crate::model::{AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow};
 use std::sync::{Arc, Mutex};
 
 const USAGE_ENDPOINT: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -39,7 +37,9 @@ impl ProviderService for ClaudeCodeService {
     fn fetch(&self, _keys: &KeyRing) -> ProviderUsage {
         let account = AccountKey::primary(Provider::ClaudeCode);
         match self.load_access_token() {
-            Login::None => ProviderUsage::unavailable(account, Unavailability::ClaudeSignInRequired),
+            Login::None => {
+                ProviderUsage::unavailable(account, Unavailability::ClaudeSignInRequired)
+            }
             Login::Expired => {
                 ProviderUsage::unavailable(account, Unavailability::ClaudeLoginExpired)
             }
@@ -100,19 +100,20 @@ impl ClaudeCodeService {
             ("User-Agent", "claude-cli (external, cli)".to_string()),
             ("Accept", "application/json".to_string()),
         ];
-        let header_refs: Vec<(&str, &str)> = headers
-            .iter()
-            .map(|(k, v)| (*k, v.as_str()))
-            .collect();
+        let header_refs: Vec<(&str, &str)> =
+            headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let root = match self.http.fetch_json(crate::http::Method::Get, USAGE_ENDPOINT, &header_refs, None)
-        {
-            Ok(v) => v,
-            Err(Unavailability::ApiKeyRefused) => {
-                return ProviderUsage::unavailable(account, Unavailability::ClaudeLoginExpired)
-            }
-            Err(reason) => return ProviderUsage::unavailable(account, reason),
-        };
+        let root =
+            match self
+                .http
+                .fetch_json(crate::http::Method::Get, USAGE_ENDPOINT, &header_refs, None)
+            {
+                Ok(v) => v,
+                Err(Unavailability::ApiKeyRefused) => {
+                    return ProviderUsage::unavailable(account, Unavailability::ClaudeLoginExpired)
+                }
+                Err(reason) => return ProviderUsage::unavailable(account, reason),
+            };
 
         // The plan is an enrichment on a second endpoint, asked rarely and
         // never waited for: whatever is already known goes with the figures,
@@ -167,7 +168,12 @@ impl ClaudeCodeService {
             let header_refs: Vec<(&str, &str)> =
                 headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
             let result = http
-                .fetch_json(crate::http::Method::Get, PROFILE_ENDPOINT, &header_refs, None)
+                .fetch_json(
+                    crate::http::Method::Get,
+                    PROFILE_ENDPOINT,
+                    &header_refs,
+                    None,
+                )
                 .ok()
                 .and_then(|root| plan_name(&root));
             let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -292,7 +298,10 @@ fn window_from_limit(limit: &serde_json::Value) -> Option<UsageWindow> {
         .map(|s| s.to_string());
 
     let mut window = UsageWindow::new(
-        &format!("claudeCode.{kind_name}.{}", scope.as_deref().unwrap_or("all")),
+        &format!(
+            "claudeCode.{kind_name}.{}",
+            scope.as_deref().unwrap_or("all")
+        ),
         kind,
         scope,
         percent / 100.0,

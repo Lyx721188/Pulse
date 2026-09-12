@@ -13,9 +13,7 @@
 
 use super::{pasted_or_none, KeyRing, ProviderService};
 use crate::http::{number, HttpClient};
-use crate::model::{
-    AccountKey, Kind, Provider, ProviderUsage, Unavailability, UsageWindow,
-};
+use crate::model::{AccountKey, Kind, Provider, ProviderUsage, Unavailability, UsageWindow};
 use std::sync::Arc;
 
 pub struct MinimaxService {
@@ -64,7 +62,10 @@ impl ProviderService for MinimaxService {
                 }
             }
         }
-        ProviderUsage::unavailable(account, first_problem.unwrap_or(Unavailability::Unreachable))
+        ProviderUsage::unavailable(
+            account,
+            first_problem.unwrap_or(Unavailability::Unreachable),
+        )
     }
 }
 
@@ -88,7 +89,12 @@ impl MinimaxService {
         }
     }
 
-    fn attempt(&self, endpoint: &str, key: &str, provider: Provider) -> Result<ProviderUsage, Attempt> {
+    fn attempt(
+        &self,
+        endpoint: &str,
+        key: &str,
+        provider: Provider,
+    ) -> Result<ProviderUsage, Attempt> {
         let account = AccountKey::primary(provider);
         let headers = [
             ("Authorization", format!("Bearer {key}")),
@@ -161,9 +167,7 @@ impl MinimaxService {
         .iter()
         .filter_map(|key| crate::http::number_field(payload, key))
         .find(|p| *p > 0.0)
-        .map(|points| {
-            crate::localization::t_fmt("{n} points", &[(&(points as i64).to_string())])
-        });
+        .map(|points| crate::localization::t_fmt("{n} points", &[(&(points as i64).to_string())]));
 
         let mut usage = ProviderUsage::live_now(account, windows);
         usage.origin = Some(self.origin_token().to_string());

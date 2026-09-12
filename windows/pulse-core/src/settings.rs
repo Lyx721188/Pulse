@@ -137,11 +137,8 @@ impl AppSettings {
                 }
             }
         }
-        let mut others: Vec<Provider> = all
-            .iter()
-            .copied()
-            .filter(|p| !order.contains(p))
-            .collect();
+        let mut others: Vec<Provider> =
+            all.iter().copied().filter(|p| !order.contains(p)).collect();
         others.sort_by_key(|p| p.display_name().to_string());
         order.extend(others);
         let _ = known;

@@ -26,9 +26,9 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use crate::card::{body_size as card_body_size, CardData};
 use crate::d2d::{global_engine, Painter, SwapchainCanvas};
 use crate::flyout::Flyout;
-use crate::geometry::{self, dock, card, Edge, Metrics};
+use crate::geometry::{self, card, dock, Edge, Metrics};
 use crate::rings::{draw_ring, ring_center, RingModel};
-use crate::theme::{panel as theme_panel};
+use crate::theme::panel as theme_panel;
 use crate::winutil;
 
 /// How long the card lingers after the pointer leaves the bar, so a trip
@@ -141,7 +141,8 @@ impl RailEntry {
             headline: None,
             usage: None,
         }
-    }}
+    }
+}
 
 struct DragState {
     /// Where inside the window the grab happened, in units.
@@ -334,8 +335,13 @@ impl PanelWindow {
         if self.canvas.is_none() {
             self.dpi = dpi_scale;
             self.canvas = Some(
-                SwapchainCanvas::new(self.hwnd, global_engine(), physical.0.max(1), physical.1.max(1))
-                    .expect("panel canvas"),
+                SwapchainCanvas::new(
+                    self.hwnd,
+                    global_engine(),
+                    physical.0.max(1),
+                    physical.1.max(1),
+                )
+                .expect("panel canvas"),
             );
         } else {
             let size_changed = self
@@ -375,14 +381,24 @@ impl PanelWindow {
                 let x = settings.float_x.clamp(0.0, 1.0);
                 let y = settings.float_y.clamp(0.0, 1.0);
                 (
-                    work.left + margin + ((work.width() - physical.0 - margin * 2) as f64 * x) as i32,
-                    work.top + margin + ((work.height() - physical.1 - margin * 2) as f64 * y) as i32,
+                    work.left
+                        + margin
+                        + ((work.width() - physical.0 - margin * 2) as f64 * x) as i32,
+                    work.top
+                        + margin
+                        + ((work.height() - physical.1 - margin * 2) as f64 * y) as i32,
                 )
             }
         };
         // Clamp into the work area whatever happened.
-        px = px.clamp(work.left + margin, (work.right - physical.0 - margin).max(work.left + margin));
-        py = py.clamp(work.top + margin, (work.bottom - physical.1 - margin).max(work.top + margin));
+        px = px.clamp(
+            work.left + margin,
+            (work.right - physical.0 - margin).max(work.left + margin),
+        );
+        py = py.clamp(
+            work.top + margin,
+            (work.bottom - physical.1 - margin).max(work.top + margin),
+        );
 
         unsafe {
             let _ = SetWindowPos(
@@ -419,10 +435,7 @@ impl PanelWindow {
             .iter()
             .map(|e| {
                 let id = e.account.id();
-                let seed = old
-                    .get(&id)
-                    .copied()
-                    .unwrap_or((0.0, 0.0, 0.0, 0.0));
+                let seed = old.get(&id).copied().unwrap_or((0.0, 0.0, 0.0, 0.0));
                 (id, seed)
             })
             .collect();
@@ -431,7 +444,11 @@ impl PanelWindow {
             self.compute_window_size();
             self.place();
         }
-        if self.card_slot.map(|s| s >= self.entries.len()).unwrap_or(false) {
+        if self
+            .card_slot
+            .map(|s| s >= self.entries.len())
+            .unwrap_or(false)
+        {
             self.hide_card();
         }
         self.redraw();
@@ -587,10 +604,8 @@ impl PanelWindow {
         unsafe {
             let _ = GetWindowRect(self.hwnd, &mut rect);
         }
-        let (_, work) = winutil::monitor_work_at(
-            (rect.left + rect.right) / 2,
-            (rect.top + rect.bottom) / 2,
-        );
+        let (_, work) =
+            winutil::monitor_work_at((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
         let dpi = self.dpi;
         let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
         let center = ring_center(&self.m, slot, rail, self.edge);
@@ -605,8 +620,14 @@ impl PanelWindow {
             Edge::Left => (rect.right as f64 + gap, ring_y - h / 2.0),
             Edge::Top => (ring_x - w / 2.0, rect.bottom as f64 + gap),
         };
-        tx = tx.clamp(work.left as f64, (work.right as f64 - w).max(work.left as f64));
-        ty = ty.clamp(work.top as f64, (work.bottom as f64 - h).max(work.top as f64));
+        tx = tx.clamp(
+            work.left as f64,
+            (work.right as f64 - w).max(work.left as f64),
+        );
+        ty = ty.clamp(
+            work.top as f64,
+            (work.bottom as f64 - h).max(work.top as f64),
+        );
 
         if self.card_shown() {
             // A move between rings: hand the destination to the spring and
@@ -646,9 +667,23 @@ impl PanelWindow {
 
         // The springs: each one steps toward its target with the same
         // fixed dt the timer hands out.
-        spring_step(&mut self.presence, &mut self.presence_v, 1.0, 0.32, 0.86, dt);
+        spring_step(
+            &mut self.presence,
+            &mut self.presence_v,
+            1.0,
+            0.32,
+            0.86,
+            dt,
+        );
         let hover_target = if self.hover_slot.is_some() { 1.0 } else { 0.0 };
-        spring_step(&mut self.hover_spring, &mut self.hover_v, hover_target, 0.34, 0.82, dt);
+        spring_step(
+            &mut self.hover_spring,
+            &mut self.hover_v,
+            hover_target,
+            0.34,
+            0.82,
+            dt,
+        );
         for entry in &self.entries {
             let Some(s) = self.arc_springs.get_mut(&entry.account.id()) else {
                 continue;
@@ -685,9 +720,7 @@ impl PanelWindow {
                 let Some(s) = self.arc_springs.get(&e.account.id()) else {
                     return false;
                 };
-                e.ring
-                    .used_fraction
-                    .is_some_and(|t| !settled(s.0, s.1, t))
+                e.ring.used_fraction.is_some_and(|t| !settled(s.0, s.1, t))
                     || e.ring
                         .second_fraction
                         .is_some_and(|t| !settled(s.2, s.3, t))
@@ -696,8 +729,22 @@ impl PanelWindow {
 
         // The card's slide toward its ring.
         if let (Some((tx, ty)), true) = (self.card_target, self.card_shown()) {
-            spring_step(&mut self.card_x, &mut self.card_vx, tx as f64, 0.34, 0.82, dt);
-            spring_step(&mut self.card_y, &mut self.card_vy, ty as f64, 0.34, 0.82, dt);
+            spring_step(
+                &mut self.card_x,
+                &mut self.card_vx,
+                tx as f64,
+                0.34,
+                0.82,
+                dt,
+            );
+            spring_step(
+                &mut self.card_y,
+                &mut self.card_vy,
+                ty as f64,
+                0.34,
+                0.82,
+                dt,
+            );
             if !(settled(self.card_x, self.card_vx, tx as f64)
                 && settled(self.card_y, self.card_vy, ty as f64))
             {
@@ -714,7 +761,11 @@ impl PanelWindow {
         if let Some(at) = self.leave_at {
             if now >= at {
                 self.leave_at = None;
-                let inside = self.card.as_ref().map(|c| c.pointer_inside).unwrap_or(false);
+                let inside = self
+                    .card
+                    .as_ref()
+                    .map(|c| c.pointer_inside)
+                    .unwrap_or(false);
                 if !inside {
                     self.hide_card();
                     card_changed = true;
@@ -723,7 +774,10 @@ impl PanelWindow {
         }
 
         // Any busy ring keeps the frame clock alive.
-        let busy = self.entries.iter().any(|e| e.ring.is_busy || e.ring.is_refreshing);
+        let busy = self
+            .entries
+            .iter()
+            .any(|e| e.ring.is_busy || e.ring.is_refreshing);
         if moving || busy || card_changed {
             self.redraw();
         }
@@ -806,7 +860,9 @@ impl PanelWindow {
         };
         if let Some(slot) = geometry::dock::slot_at(&self.m, along, self.edge.axis(), count) {
             if let Some(entry) = self.entries.get(slot) {
-                let _ = self.events.send(PanelEvent::RefreshAccount(entry.account.clone()));
+                let _ = self
+                    .events
+                    .send(PanelEvent::RefreshAccount(entry.account.clone()));
                 // Immediate visible feedback; the store's answer lands
                 // through the usual channel.
                 if let Some(e) = self.entries.get_mut(slot) {
@@ -919,15 +975,27 @@ impl PanelWindow {
         let phys_h = (self.window_units.1 * dpi_scale) as i32;
 
         let (nx, ny) = match (self.docked, self.edge) {
-            (true, Edge::Right) => (work.right - phys_w - margin, work.top + (work.height() - phys_h) / 2),
+            (true, Edge::Right) => (
+                work.right - phys_w - margin,
+                work.top + (work.height() - phys_h) / 2,
+            ),
             (true, Edge::Left) => (work.left + margin, work.top + (work.height() - phys_h) / 2),
             (true, Edge::Top) => {
-                let x = want_x.clamp(work.left + margin, (work.right - phys_w - margin).max(work.left + margin));
+                let x = want_x.clamp(
+                    work.left + margin,
+                    (work.right - phys_w - margin).max(work.left + margin),
+                );
                 (x, work.top + margin)
             }
             _ => {
-                let x = want_x.clamp(work.left + margin, (work.right - phys_w - margin).max(work.left + margin));
-                let y = want_y.clamp(work.top + margin, (work.bottom - phys_h - margin).max(work.top + margin));
+                let x = want_x.clamp(
+                    work.left + margin,
+                    (work.right - phys_w - margin).max(work.left + margin),
+                );
+                let y = want_y.clamp(
+                    work.top + margin,
+                    (work.bottom - phys_h - margin).max(work.top + margin),
+                );
                 (x, y)
             }
         };
@@ -994,7 +1062,8 @@ impl PanelWindow {
     /// ratios carry across unchanged, so the rail keeps its place on a
     /// display whatever its size.
     pub fn follow_pointer_if_enabled(&mut self) -> bool {
-        let (enabled, current_display) = pulse_core::settings::with(|s| (s.follows_active_display, s.display.clone()));
+        let (enabled, current_display) =
+            pulse_core::settings::with(|s| (s.follows_active_display, s.display.clone()));
         if !enabled || self.drag.is_some() {
             return false;
         }
@@ -1107,7 +1176,12 @@ struct MonitorEnumCtx {
 
 /// The panel's window procedure. Everything arrives here first; drag and
 /// ring clicks belong to the window, not to any view inside it.
-unsafe extern "system" fn panel_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn panel_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     // Messages that arrive during CreateWindowExW precede the userdata
     // assignment; the state pointer is the ownership handover point.
     let state = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
@@ -1186,7 +1260,9 @@ unsafe fn setting_change_name(lparam: LPARAM) -> Option<String> {
     while *ptr.add(len) != 0 {
         len += 1;
     }
-    Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)))
+    Some(String::from_utf16_lossy(std::slice::from_raw_parts(
+        ptr, len,
+    )))
 }
 
 /// Small helper on RECT the window code uses everywhere.

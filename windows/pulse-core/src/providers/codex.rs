@@ -8,9 +8,7 @@
 
 use super::{KeyRing, ProviderService};
 use crate::http::{number, object_field, string_field, HttpClient};
-use crate::model::{
-    AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow,
-};
+use crate::model::{AccountKey, Kind, Provider, ProviderUsage, State, Unavailability, UsageWindow};
 use std::sync::Arc;
 
 const ENDPOINT: &str = "https://chatgpt.com/backend-api/wham/usage";
@@ -50,19 +48,22 @@ impl ProviderService for CodexService {
         if !credentials.1.is_empty() {
             headers.push(("ChatGPT-Account-Id".into(), credentials.1.clone()));
         }
-        let header_refs: Vec<(&str, &str)> =
-            headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let header_refs: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
-        let root = match self
-            .http
-            .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
-        {
-            Ok(v) => v,
-            Err(Unavailability::ApiKeyRefused) => {
-                return ProviderUsage::unavailable(account, Unavailability::SignInRequired)
-            }
-            Err(reason) => return ProviderUsage::unavailable(account, reason),
-        };
+        let root =
+            match self
+                .http
+                .fetch_json(crate::http::Method::Get, ENDPOINT, &header_refs, None)
+            {
+                Ok(v) => v,
+                Err(Unavailability::ApiKeyRefused) => {
+                    return ProviderUsage::unavailable(account, Unavailability::SignInRequired)
+                }
+                Err(reason) => return ProviderUsage::unavailable(account, reason),
+            };
 
         let mut usage = ProviderUsage::live_now(account, parse_usage_response(&root));
         usage.origin = Some(self.origin_token().to_string());
@@ -124,7 +125,11 @@ pub fn parse_usage_response(root: &serde_json::Value) -> Vec<UsageWindow> {
 /// `primary_window` and `secondary_window` are not tied to particular
 /// durations, and which windows exist depends on the plan — so a window's
 /// kind comes from its duration, never from which slot it arrived in.
-fn http_windows(limit: &serde_json::Value, id_prefix: &str, scope: Option<String>) -> Vec<UsageWindow> {
+fn http_windows(
+    limit: &serde_json::Value,
+    id_prefix: &str,
+    scope: Option<String>,
+) -> Vec<UsageWindow> {
     ["primary_window", "secondary_window"]
         .into_iter()
         .filter_map(|slot| {
@@ -134,7 +139,10 @@ fn http_windows(limit: &serde_json::Value, id_prefix: &str, scope: Option<String
                 .get("limit_window_seconds")
                 .and_then(number)
                 .map(|s| s as i64);
-            let resets = node.get("reset_at").and_then(number).map(crate::timeutil::epoch_to_ms);
+            let resets = node
+                .get("reset_at")
+                .and_then(number)
+                .map(crate::timeutil::epoch_to_ms);
 
             let mut window = UsageWindow::new(
                 &format!("{id_prefix}.{slot}"),

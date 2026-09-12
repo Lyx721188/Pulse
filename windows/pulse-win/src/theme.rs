@@ -124,7 +124,9 @@ pub fn system_accent() -> Rgba {
     let fallback = Rgba::from_hex(0x0078D4);
     let result: Result<Rgba, ()> = (|| {
         let settings = UISettings::new().map_err(|_| ())?;
-        let color = settings.GetColorValue(UIColorType::Accent).map_err(|_| ())?;
+        let color = settings
+            .GetColorValue(UIColorType::Accent)
+            .map_err(|_| ())?;
         Ok(Rgba::new(
             color.R as f32 / 255.0,
             color.G as f32 / 255.0,
@@ -143,9 +145,7 @@ pub fn system_prefers_light() -> bool {
         let mut key = HKEY::default();
         let open = RegOpenKeyExW(
             HKEY_CURRENT_USER,
-            windows::core::w!(
-                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-            ),
+            windows::core::w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
             None,
             KEY_READ,
             &mut key,

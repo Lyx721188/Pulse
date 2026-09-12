@@ -51,13 +51,7 @@ pub fn set_enabled(enabled: bool) {
                     .chain(std::iter::once(0))
                     .flat_map(|c| c.to_le_bytes())
                     .collect();
-                let _ = RegSetValueExW(
-                    key,
-                    w!("Pulse"),
-                    None,
-                    REG_SZ,
-                    Some(&mut bytes),
-                );
+                let _ = RegSetValueExW(key, w!("Pulse"), None, REG_SZ, Some(&mut bytes));
             }
         } else {
             let _ = RegDeleteValueW(key, w!("Pulse"));
@@ -69,10 +63,7 @@ pub fn set_enabled(enabled: bool) {
 fn current_exe_path() -> Option<String> {
     unsafe {
         let mut buffer = [0u16; 1024];
-        let len = windows::Win32::System::LibraryLoader::GetModuleFileNameW(
-            None,
-            &mut buffer,
-        );
+        let len = windows::Win32::System::LibraryLoader::GetModuleFileNameW(None, &mut buffer);
         if len == 0 {
             return None;
         }
