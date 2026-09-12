@@ -71,12 +71,13 @@ jobs:
 
       # The build's self-contained step copies the WinAppSDK runtime next to
       # the exe; the settings window cannot start without those DLLs, so the
-      # artifact is the whole folder, zipped.
+      # artifact is the whole folder, zipped. (Paths are relative to
+      # `windows/`, the job's working directory.)
       - name: Zip the release folder
         shell: pwsh
         run: |
-          Compress-Archive -Path windows/target/release/pulse.exe, windows/target/release/*.dll -DestinationPath windows/target/release/pulse-windows-x64.zip
-          Write-Host (Get-Item windows/target/release/pulse-windows-x64.zip).Length
+          Compress-Archive -Path target/release/pulse.exe, target/release/*.dll -DestinationPath target/release/pulse-windows-x64.zip -Force
+          Write-Host (Get-Item target/release/pulse-windows-x64.zip).Length
 
       - name: Upload pulse-windows-x64
         uses: actions/upload-artifact@v4
