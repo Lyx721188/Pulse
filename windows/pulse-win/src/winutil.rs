@@ -1,21 +1,18 @@
 //! Small Win32 conveniences shared by every window in the app.
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{
-    GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM,
-};
+use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HINSTANCE, HWND, POINT};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HMONITOR, MONITORINFO, MONITORINFOEXW,
     MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
-    GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub const WM_APP_TRAY: u32 = WM_APP + 1;
-pub const WM_APP_STORE: u32 = WM_APP + 2;
 /// The detail flyout -> panel: "pointer came in" / "pointer left".
 pub const WM_APP_CARD: u32 = WM_APP + 3;
 
@@ -30,10 +27,6 @@ pub fn set_dpi_awareness() {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
-}
-
-pub fn dpi_for(hwnd: HWND) -> f64 {
-    unsafe { GetDpiForWindow(hwnd) as f64 / 96.0 }
 }
 
 /// The work area of the monitor a point sits on, in physical pixels.
@@ -90,13 +83,13 @@ pub fn acquire_single_instance() -> bool {
             w!("Pulse.Windows.SingleInstance"),
         );
         match handle {
-            Ok(handle) => {
+            Ok(_) => {
                 if GetLastError() == ERROR_ALREADY_EXISTS {
                     return false;
                 }
-                // Intentionally leaked: the mutex lives as long as the
-                // process does, and dropping the HANDLE closes it.
-                std::mem::forget(handle);
+                // HANDLE is Copy, so "leaking" is automatic: never
+                // closing it is what keeps the mutex alive for the
+                // process lifetime.
                 true
             }
             Err(_) => true,
@@ -104,21 +97,9 @@ pub fn acquire_single_instance() -> bool {
     }
 }
 
-pub fn center_cursor() -> POINT {
-    let mut pt = POINT::default();
-    unsafe {
-        let _ = GetCursorPos(&mut pt);
-    }
-    pt
-}
-
-/// A `.wide()`-shaped convenience: NUL-terminated UTF-16.
+/// A NUL-terminated UTF-16 buffer; the vec outlives the calls it feeds.
 pub fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-pub fn pcwstr(text: &str) -> PCWSTR {
-    PCWSTR::from_raw(wide(text).as_ptr())
 }
 
 /// Keeps a wide buffer alive for the duration of a call that borrows it.
@@ -136,14 +117,6 @@ impl TempWide {
     }
 }
 
-pub fn post_wm_quit() {
-    unsafe {
-        let _ = PostQuitMessage(0);
-    }
-}
-
-pub type WndProc = unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT;
-
 /// The default arrow cursor, loaded lazily.
 pub fn arrow_cursor() -> HCURSOR {
     unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() }
@@ -151,15 +124,10 @@ pub fn arrow_cursor() -> HCURSOR {
 
 pub use windows::Win32::Foundation::RECT;
 
-/// `HANDLE` that must not be closed for the process lifetime.
-pub fn leak_handle(handle: HANDLE) {
-    std::mem::forget(handle);
-}
-
 /// The real Win11 window materials, in three DWM attributes: Mica behind
 /// the whole client area, the frame's dark variant matching the system
-/// appearance, and Windows' own corner rounding. Called again whenever the
-/// theme changes, because the dark-mode flag is a snapshot, not a binding.
+/// appearance, and Windows' own corner rounding. Set **once**, at window
+/// creation.
 pub fn apply_system_backdrop(hwnd: HWND, dark: bool) {
     unsafe {
         let margins = windows::Win32::UI::Controls::MARGINS {
@@ -168,36 +136,41 @@ pub fn apply_system_backdrop(hwnd: HWND, dark: bool) {
             cyTopHeight: -1,
             cyBottomHeight: -1,
         };
-        let r0 = windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(hwnd, &margins);
+        let _ = windows::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea(hwnd, &margins);
         // DWMSBT_MAINWINDOW is Mica.
         let backdrop: i32 = 2;
-        let r1 = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+        let _ = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
             hwnd,
             windows::Win32::Graphics::Dwm::DWMWA_SYSTEMBACKDROP_TYPE,
             &backdrop as *const i32 as *const core::ffi::c_void,
             std::mem::size_of::<i32>() as u32,
         );
-        let dark_flag: i32 = dark as i32;
-        let r2 = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-            hwnd,
-            windows::Win32::Graphics::Dwm::DWMWA_USE_IMMERSIVE_DARK_MODE,
-            &dark_flag as *const i32 as *const core::ffi::c_void,
-            std::mem::size_of::<i32>() as u32,
-        );
+        set_backdrop_dark(hwnd, dark);
         // DWMWCP_ROUND: the corner radius Windows itself applies to
         // surfaces — not a radius this app draws.
         let corner: i32 = 2;
-        let r3 = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+        let _ = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
             hwnd,
             windows::Win32::Graphics::Dwm::DWMWA_WINDOW_CORNER_PREFERENCE,
             &corner as *const i32 as *const core::ffi::c_void,
             std::mem::size_of::<i32>() as u32,
         );
-        if cfg!(debug_assertions) {
-            eprintln!(
-                "backdrop hwnd={:?} extend={r0:?} mica={r1:?} dark={r2:?} corner={r3:?}",
-                hwnd.0
-            );
-        }
+    }
+}
+
+/// Updates only the dark-mode flag of the backdrop. Re-applying the whole
+/// material set on a theme change provokes DWM into rebuilding its
+/// composition for the window — which the DirectComposition visual tree
+/// does not survive — so theme switches touch just this flag, which Mica
+/// honours live.
+pub fn set_backdrop_dark(hwnd: HWND, dark: bool) {
+    unsafe {
+        let dark_flag: i32 = dark as i32;
+        let _ = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &dark_flag as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
     }
 }

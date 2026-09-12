@@ -115,7 +115,7 @@ impl Flyout {
                 px_h.max(1),
                 SWP_NOACTIVATE,
             );
-            ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
     }
 

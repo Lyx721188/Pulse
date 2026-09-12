@@ -34,10 +34,6 @@ impl Rgba {
             (hex & 0xFF) as f32 / 255.0,
         )
     }
-
-    pub fn is_light(&self) -> bool {
-        self.a > 0.5
-    }
 }
 
 /// The dock's palette. There is no painted surface any more — the window is
@@ -57,7 +53,6 @@ pub mod panel {
         pub track: Rgba,
         pub text_primary: Rgba,
         pub text_secondary: Rgba,
-        pub text_tertiary: Rgba,
         pub text_disabled: Rgba,
         /// The progress-bar track on the detail card.
         pub bar_track: Rgba,
@@ -67,7 +62,6 @@ pub mod panel {
         track: Rgba::new(1.0, 1.0, 1.0, 0.14),
         text_primary: Rgba::rgb(1.0, 1.0, 1.0),
         text_secondary: Rgba::new(1.0, 1.0, 1.0, 0.786),
-        text_tertiary: Rgba::new(1.0, 1.0, 1.0, 0.544),
         text_disabled: Rgba::new(1.0, 1.0, 1.0, 0.36),
         bar_track: Rgba::new(1.0, 1.0, 1.0, 0.17),
     };
@@ -76,7 +70,6 @@ pub mod panel {
         track: Rgba::new(0.0, 0.0, 0.0, 0.14),
         text_primary: Rgba::rgb(0.1, 0.1, 0.1),
         text_secondary: Rgba::new(0.0, 0.0, 0.0, 0.61),
-        text_tertiary: Rgba::new(0.0, 0.0, 0.0, 0.45),
         text_disabled: Rgba::new(0.0, 0.0, 0.0, 0.36),
         bar_track: Rgba::new(0.0, 0.0, 0.0, 0.15),
     };
@@ -167,14 +160,4 @@ pub fn system_prefers_light() -> bool {
         let _ = RegCloseKey(key);
         result.is_ok() && data == 1
     }
-}
-
-/// WinUI corner radii, in design units.
-pub mod radius {
-    /// Controls: text boxes, buttons, toggles.
-    pub const CONTROL: f64 = 4.0;
-    /// Cards and flyouts.
-    pub const CARD: f64 = 8.0;
-    /// Large surfaces (the settings window itself).
-    pub const WINDOW: f64 = 8.0;
 }

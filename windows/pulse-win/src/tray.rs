@@ -7,8 +7,8 @@ use std::sync::mpsc::Sender;
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
-    DefSubclassProc, SetWindowSubclass, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE,
-    NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -42,7 +42,7 @@ fn build_icon() -> HICON {
     unsafe {
         let size = 32i32;
         let hdc = windows::Win32::Graphics::Gdi::CreateCompatibleDC(None);
-        let mut bmi = windows::Win32::Graphics::Gdi::BITMAPINFO {
+        let bmi = windows::Win32::Graphics::Gdi::BITMAPINFO {
             bmiHeader: windows::Win32::Graphics::Gdi::BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>()
                     as u32,
@@ -98,7 +98,6 @@ fn build_icon() -> HICON {
         }
         let _ = windows::Win32::Graphics::Gdi::SelectObject(hdc, old);
         let _ = windows::Win32::Graphics::Gdi::DeleteDC(hdc);
-        bmi.bmiHeader.biSizeImage = 0;
 
         let mut icon_info = ICONINFO {
             fIcon: true.into(),
@@ -308,23 +307,4 @@ unsafe fn show_menu(hwnd: HWND, commands: &Sender<TrayCommand>) {
         Some(std::ptr::null::<TPMPARAMS>()),
     );
     let _ = DestroyMenu(menu);
-}
-
-/// Installed once so the subclass keeps the tray window's messages flowing
-/// even if a future window takes the class over.
-pub fn install_subclass(hwnd: HWND) {
-    unsafe {
-        let _ = SetWindowSubclass(hwnd, Some(subclass_proc), 1, 0);
-    }
-}
-
-unsafe extern "system" fn subclass_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-    _id: usize,
-    _data: usize,
-) -> LRESULT {
-    DefSubclassProc(hwnd, msg, wparam, lparam)
 }

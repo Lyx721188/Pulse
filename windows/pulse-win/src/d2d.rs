@@ -90,10 +90,6 @@ pub fn scale_matrix(sx: f32, sy: f32) -> Matrix3x2 {
     Matrix3x2::scale(sx, sy)
 }
 
-pub fn translation_matrix(dx: f32, dy: f32) -> Matrix3x2 {
-    Matrix3x2::translation(dx, dy)
-}
-
 impl D2DEngine {
     pub fn new() -> Result<D2DEngine> {
         unsafe {
@@ -403,18 +399,6 @@ impl<'a> Painter<'a> {
         }
     }
 
-    pub fn draw_rounded_rect(
-        &self,
-        r: D2D_RECT_F,
-        radius: f32,
-        brush: &ID2D1SolidColorBrush,
-        stroke: f32,
-    ) {
-        if let Ok(geometry) = rounded_rect_geometry(self.engine, r, radius) {
-            self.draw_geometry(&geometry, brush, stroke, false);
-        }
-    }
-
     pub fn fill_ellipse(&self, center: Vector2, radius: f32, brush: &ID2D1SolidColorBrush) {
         unsafe {
             let _ = self.rt.FillEllipse(
@@ -425,20 +409,6 @@ impl<'a> Painter<'a> {
                 },
                 brush,
             );
-        }
-    }
-
-    pub fn draw_line(&self, from: Vector2, to: Vector2, brush: &ID2D1SolidColorBrush, width: f32) {
-        unsafe {
-            let _ = self
-                .rt
-                .DrawLine(from, to, brush, width, Some(&self.engine.round_stroke));
-        }
-    }
-
-    pub fn fill_rect(&self, r: D2D_RECT_F, brush: &ID2D1SolidColorBrush) {
-        unsafe {
-            let _ = self.rt.FillRectangle(&r, brush);
         }
     }
 

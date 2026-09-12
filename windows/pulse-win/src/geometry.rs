@@ -42,24 +42,20 @@ impl Edge {
 #[derive(Debug, Clone, Copy)]
 pub struct Metrics {
     pub scale: f64,
-    pub spacing: f64,
     /// Whether the percent label sits above its ring rather than below.
     pub label_leads: bool,
     /// Whether the ring carries a percent label, per axis.
     pub side_percentages: bool,
     pub top_percentages: bool,
-    pub capacity: usize,
 }
 
 impl Metrics {
-    pub fn from_settings(settings: &pulse_core::settings::AppSettings, capacity: usize) -> Metrics {
+    pub fn from_settings(settings: &pulse_core::settings::AppSettings) -> Metrics {
         Metrics {
             scale: settings.scale(),
-            spacing: settings.spacing(),
             label_leads: settings.label_above_ring,
             side_percentages: settings.side_rail_shows_percentages,
             top_percentages: settings.top_rail_shows_percentages,
-            capacity: capacity.max(1),
         }
     }
 
@@ -96,8 +92,6 @@ pub mod dock {
 
     /// Empty screen between the bar and the edge it docks to.
     pub const EDGE_MARGIN: f64 = 14.0;
-    pub const SECOND_RING_DIAMETER: f64 = 26.0;
-    pub const SECOND_RING_LINE_WIDTH: f64 = 2.5;
 
     /// Height of one ring + its percent label.
     pub fn item_height(m: &Metrics) -> f64 {
@@ -204,12 +198,6 @@ pub mod dock {
     /// Ring centre along the rail for slot `index`.
     pub fn ring_centre_along(m: &Metrics, index: usize, axis: Axis) -> f64 {
         first_ring_along(m, axis) + ring_step(m, axis) * index as f64
-    }
-
-    /// The rail at its longest, which is what the panel has to leave room
-    /// for.
-    pub fn maximum_length(m: &Metrics, axis: Axis) -> f64 {
-        length(m, m.capacity, axis)
     }
 
     /// Which slot a point along the rail lands on, or none between rings.

@@ -152,7 +152,7 @@ fn decode_tinted(
         let lock = source
             .Lock(std::ptr::null(), WICBitmapLockRead.0 as u32)
             .ok()?;
-        let mut stride = lock.GetStride().ok()?;
+        let stride = lock.GetStride().ok()?;
         let mut size = 0u32;
         let mut data: *mut u8 = std::ptr::null_mut();
         lock.GetDataPointer(&mut size, &mut data).ok()?;

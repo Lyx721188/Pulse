@@ -216,9 +216,6 @@ impl App {
                 self.store.send(Command::RefreshAccount(account));
                 self.mark_refreshing();
             }
-            PanelEvent::OpenSettings => {
-                self.settings.show();
-            }
             PanelEvent::PositionChanged => {
                 // Nothing to do: the panel persisted its own position.
             }
@@ -242,7 +239,7 @@ impl App {
                     self.mark_refreshing();
                 }
             }
-            SettingsAction::SaveKey(_, _) => {
+            SettingsAction::SaveKey => {
                 self.store.send(Command::SettingsChanged);
             }
             SettingsAction::SignInCopilot => self.start_device_flow(),

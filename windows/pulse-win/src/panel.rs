@@ -47,7 +47,6 @@ const TICK_SECONDS: f64 = 0.03;
 
 pub enum PanelEvent {
     RefreshAccount(AccountKey),
-    OpenSettings,
     PositionChanged,
 }
 
@@ -234,7 +233,7 @@ impl PanelWindow {
             canvas: None,
             card: None,
             entries: Vec::new(),
-            m: Metrics::from_settings(&pulse_core::settings::with(|s| s.clone()), 1),
+            m: Metrics::from_settings(&pulse_core::settings::with(|s| s.clone())),
             edge: Edge::Right,
             docked: true,
             presence: 0.0,
@@ -294,7 +293,7 @@ impl PanelWindow {
             // Mica, Windows' own corner radius, and the dark/light variant
             // that matches the system — all DWM, none of it drawn here.
             winutil::apply_system_backdrop(hwnd, theme_panel::is_dark());
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
         panel.card = Some(Flyout::new(panel.hwnd));
         panel.reload_settings();
@@ -308,11 +307,10 @@ impl PanelWindow {
     /// Recomputes everything a settings change can move: metrics, edge,
     /// dock, window size, placement.
     pub fn reload_settings(&mut self) {
-        let (scale, spacing, label_leads, side_pct, top_pct, floating, side) =
+        let (scale, label_leads, side_pct, top_pct, floating, side) =
             pulse_core::settings::with(|s| {
                 (
                     s.scale(),
-                    s.spacing(),
                     s.label_above_ring,
                     s.side_rail_shows_percentages,
                     s.top_rail_shows_percentages,
@@ -323,11 +321,9 @@ impl PanelWindow {
 
         self.m = Metrics {
             scale,
-            spacing,
             label_leads,
             side_percentages: side_pct,
             top_percentages: top_pct,
-            capacity: 17,
         };
         self.edge = Edge::from_name(&side);
         self.docked = !floating;
@@ -486,10 +482,13 @@ impl PanelWindow {
 
     pub fn show(&mut self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
-        // Re-summoned from the tray: the rings bounce in again, which is
-        // the arrival the launch eased through.
+        // Re-summoned from the tray: come out of the retreat if the bar was
+        // sunk, and let the rings bounce in again — the arrival the launch
+        // eased through.
+        self.set_hidden(false);
+        self.hide_at = None;
         self.presence = 0.0;
         self.presence_v = 0.0;
         self.place();
@@ -1034,11 +1033,10 @@ impl PanelWindow {
 
     /// Re-runs placement without resetting the arrival ease.
     fn reload_settings_preserving_openness(&mut self) {
-        let (scale, spacing, label_leads, side_pct, top_pct, floating, side) =
+        let (scale, label_leads, side_pct, top_pct, floating, side) =
             pulse_core::settings::with(|s| {
                 (
                     s.scale(),
-                    s.spacing(),
                     s.label_above_ring,
                     s.side_rail_shows_percentages,
                     s.top_rail_shows_percentages,
@@ -1048,11 +1046,9 @@ impl PanelWindow {
             });
         self.m = Metrics {
             scale,
-            spacing,
             label_leads,
             side_percentages: side_pct,
             top_percentages: top_pct,
-            capacity: 17,
         };
         self.edge = Edge::from_name(&side);
         self.docked = !floating;
@@ -1365,9 +1361,12 @@ unsafe extern "system" fn panel_wndproc(
                 theme_panel::sync_theme();
                 crate::assets::clear_cache();
                 let dark = theme_panel::is_dark();
-                winutil::apply_system_backdrop(hwnd, dark);
+                // Only the dark flag: re-applying the whole material makes
+                // DWM rebuild the composition out from under the Direct
+                // Composition tree.
+                winutil::set_backdrop_dark(hwnd, dark);
                 if let Some(flyout) = panel.card.as_ref() {
-                    winutil::apply_system_backdrop(flyout.hwnd, dark);
+                    winutil::set_backdrop_dark(flyout.hwnd, dark);
                 }
                 panel.redraw();
             }
@@ -1412,19 +1411,6 @@ impl RectExt for RECT {
     fn height(&self) -> i32 {
         self.bottom - self.top
     }
-}
-
-/// The work-area helper used by `place`; exposed for the settings window's
-/// own clamp logic.
-pub fn primary_work_area() -> RECT {
-    let (_, work) = winutil::monitor_work_at(0, 0);
-    work
-}
-
-/// Re-exported so `app.rs` can pass settings into panel metrics without
-/// depending on the settings module's shape.
-pub fn metrics_from_settings(capacity: usize) -> Metrics {
-    pulse_core::settings::with(|s| Metrics::from_settings(s, capacity))
 }
 
 // GetMonitorInfoW is imported for the settings window's monitor lookup.

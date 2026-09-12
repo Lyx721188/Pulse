@@ -28,7 +28,7 @@ pub enum SettingsAction {
     /// A setting changed; the app re-reads everything it drives.
     Changed,
     RefreshProvider(String),
-    SaveKey(String, String),
+    SaveKey,
     SignInCopilot,
     SignOutCopilot,
     OpenUrl(String),
@@ -204,7 +204,6 @@ enum Message {
     Refresh(usize),
     CopilotAuth,
     OpenGitHub,
-    Scheme(ColorScheme),
 }
 
 struct SettingsApp {
@@ -227,7 +226,9 @@ impl Component for SettingsApp {
         SettingsApp {
             shared: shared.clone(),
             page: Page::General,
-            dark: false,
+            // XAML follows the system appearance; the muted ink follows it
+            // too, read once here — a reopened window re-reads.
+            dark: crate::theme::panel::is_dark(),
             keys: HashMap::new(),
             status: HashMap::new(),
             poll: Some(Self::spawn_watcher(&shared, context)),
@@ -239,7 +240,6 @@ impl Component for SettingsApp {
             Message::Tick => {
                 self.status = self.shared.take_status();
             }
-            Message::Scheme(scheme) => self.dark = scheme == ColorScheme::Dark,
             Message::Nav(tag) => {
                 self.page = tag.as_deref().map(Page::from_tag).unwrap_or(self.page);
             }
@@ -273,10 +273,7 @@ impl Component for SettingsApp {
                 if let Some(provider) = all_providers().get(index) {
                     let value = self.keys.get(provider.raw()).cloned().unwrap_or_default();
                     pulse_core::secrets::set_key(provider.raw(), value.trim());
-                    self.shared.send(SettingsAction::SaveKey(
-                        provider.raw().to_string(),
-                        value.trim().to_string(),
-                    ));
+                    self.shared.send(SettingsAction::SaveKey);
                 }
             }
             Message::Refresh(index) => {

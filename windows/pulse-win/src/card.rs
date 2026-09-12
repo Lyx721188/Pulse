@@ -165,7 +165,7 @@ pub fn draw_card(
             if data.usage.windows.is_empty() {
                 if let Some(balance) = &data.usage.credit_balance {
                     cy += m.s(card::CONTENT_SPACING);
-                    draw_value_row(
+                    let _ = draw_value_row(
                         painter,
                         m,
                         inset_x,
