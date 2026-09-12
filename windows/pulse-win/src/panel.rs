@@ -674,25 +674,27 @@ impl PanelWindow {
             return;
         };
 
-        let mut rect = RECT::default();
-        unsafe {
-            let _ = GetWindowRect(self.hwnd, &mut rect);
-        }
-        let (_, work) =
-            winutil::monitor_work_at((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+        // Anchor to the bar's resting place, not the live rect: a card
+        // summoned while the dock is still sliding out lands where the ring
+        // will be, and fades up while the bar slides out to meet it. The
+        // live rect would strand the card at some mid-slide offset, since a
+        // stationary pointer never re-triggers placement.
+        let (wx, wy) = self.base_pos;
+        let (ww, wh) = self.phys_size;
+        let (_, work) = winutil::monitor_work_at(wx + ww / 2, wy + wh / 2);
         let dpi = self.dpi;
         let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
         let center = ring_center(&self.m, slot, rail, self.edge);
-        let ring_x = rect.left as f64 + center.X as f64 * dpi;
-        let ring_y = rect.top as f64 + center.Y as f64 * dpi;
+        let ring_x = wx as f64 + center.X as f64 * dpi;
+        let ring_y = wy as f64 + center.Y as f64 * dpi;
         let gap = self.m.s(card::HORIZONTAL_GAP) * dpi;
         let w = cw * dpi;
         let h = ch * dpi;
 
         let (mut tx, mut ty) = match self.edge {
-            Edge::Right => (rect.left as f64 - gap - w, ring_y - h / 2.0),
-            Edge::Left => (rect.right as f64 + gap, ring_y - h / 2.0),
-            Edge::Top => (ring_x - w / 2.0, rect.bottom as f64 + gap),
+            Edge::Right => (wx as f64 - gap - w, ring_y - h / 2.0),
+            Edge::Left => (wx as f64 + ww as f64 + gap, ring_y - h / 2.0),
+            Edge::Top => (ring_x - w / 2.0, wy as f64 + wh as f64 + gap),
         };
         tx = tx.clamp(
             work.left as f64,
