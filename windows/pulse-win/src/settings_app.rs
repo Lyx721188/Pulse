@@ -309,9 +309,12 @@ impl Component for SettingsApp {
             .pane_title("Pulse")
             // Auto collapses to an icon strip whenever the XAML decides the
             // window is narrow; a settings pane is a list of words, so the
-            // pane is pinned open.
+            // pane is pinned open. The toggle button goes with it — one tap
+            // on it used to fold the pane down to bare icons.
             .pane_display_mode(NavigationViewPaneDisplayMode::Left)
             .open_pane_length(200.0)
+            .is_pane_toggle_button_visible(false)
+            .is_back_button_visible(NavigationViewBackButtonVisible::Collapsed)
             .on_selected_tag_changed(context.callback(Message::Nav))
             .slots([
                 SlotView::collection(
