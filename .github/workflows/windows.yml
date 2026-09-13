@@ -73,6 +73,27 @@ jobs:
           }
           Write-Host "smoke test OK: $($json.accounts.Count) account(s) on the rail"
 
+      # WinUI can report a successful launch and still raise a delayed
+      # stowed exception while applying the window backdrop. Keep this alive
+      # past that point so a release cannot ship a settings window that dies
+      # when the tray menu opens it.
+      - name: --settings startup smoke test
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ./target/release/pulse.exe -ArgumentList "--settings" -PassThru
+          try {
+            Start-Sleep -Seconds 8
+            $process.Refresh()
+            if ($process.HasExited) {
+              throw "--settings exited with code $($process.ExitCode)"
+            }
+            Write-Host "settings smoke test OK: process $($process.Id) stayed alive"
+          } finally {
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+            }
+          }
+
       # The build's self-contained step copies the WinAppSDK runtime next to
       # the exe; the settings window cannot start without those DLLs, so the
       # artifact is the whole folder, zipped. (Paths are relative to

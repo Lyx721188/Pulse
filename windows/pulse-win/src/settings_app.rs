@@ -389,7 +389,7 @@ impl Component for SettingsApp {
                     ),
                 ),
             ]);
-        let mut visuals = WindowVisuals::new().backdrop(WindowBackdrop::Mica);
+        let mut visuals = WindowVisuals::new();
         if let Some(icon) = window_icon() {
             visuals = visuals.icon(icon);
         }
