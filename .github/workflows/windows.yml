@@ -6,6 +6,10 @@ name: Windows build
 on:
   push:
     branches: ["**"]
+    # A windows-v* tag publishes the build as a Release (see the release job).
+    # macOS releases live on v* tags and belong to release.yml — the prefixes
+    # keep the two pipelines off each other's toes.
+    tags: ["windows-v*"]
     paths:
       - "windows/**"
       - ".github/workflows/windows.yml"
@@ -85,3 +89,39 @@ jobs:
           name: pulse-windows-x64
           path: windows/target/release/pulse-windows-x64.zip
           if-no-files-found: error
+
+  # Tag windows-v1.2.3, and the zip the build job just made becomes a
+  # Release. The version for the title comes from the tag itself; the build
+  # job remains the single place that decides what a shipped pulse.exe is.
+  release:
+    if: startsWith(github.ref, 'refs/tags/windows-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pulse-windows-x64
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Pulse for Windows ${GITHUB_REF_NAME#windows-v}"
+          BODY="Windows x64 build of pulse.exe. Requires Windows 10 1809+ or Windows 11."
+          BODY="$BODY
+
+          Unzip and run \`pulse.exe\` — the WinAppSDK runtime DLLs it needs travel
+          alongside it in the zip. Right-click the tray icon for settings."
+
+          # Re-runnable: a re-tag or a re-run replaces the asset in place
+          # instead of failing on an existing release.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" pulse-windows-x64.zip --clobber
+            echo "Updated existing release $GITHUB_REF_NAME."
+          else
+            gh release create "$GITHUB_REF_NAME" pulse-windows-x64.zip \
+              --title "$TITLE" \
+              --notes "$BODY"
+          fi

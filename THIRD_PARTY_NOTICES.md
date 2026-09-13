@@ -47,6 +47,16 @@ SOFTWARE.
 Pulse also links against [Sparkle](https://sparkle-project.org), which handles
 updates and is distributed under the MIT License.
 
+The Windows port under `windows/` ships copies of the same Lobe-derived
+provider marks, rasterised for its own renderer
+(`windows/pulse-win/assets/icons`). It is written in Rust against the
+Microsoft Windows SDK via the [`windows`](https://github.com/microsoft/windows-rs)
+crate, and links against further crates from crates.io — overwhelmingly
+dual-licensed MIT OR Apache-2.0. The pinned list with versions is
+`windows/Cargo.lock`, and each crate's repository carries its licence text;
+the SQLite engine compiled into `rusqlite` (the `bundled` feature) is in the
+public domain.
+
 The Claude, OpenAI, Antigravity, Cursor, OpenCode, Kimi, Ollama, Z.ai, 智谱
 and 清言, MiniMax, GitHub, Grok and xAI, and Volcengine names and marks remain
 the property of their respective owners. Their inclusion identifies compatible
