@@ -16,8 +16,8 @@ use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED,
-    D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE, D2D1_FILL_MODE_ALTERNATE, D2D1_GRADIENT_STOP,
-    D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_F,
+    D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN, D2D1_FILL_MODE, D2D1_FILL_MODE_ALTERNATE,
+    D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_F,
 };
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::Direct2D::{
@@ -599,6 +599,17 @@ impl PathBuilder {
         }
     }
 
+    pub fn end_open(&mut self) {
+        if self.open {
+            if let Some(sink) = &self.sink {
+                unsafe {
+                    sink.EndFigure(D2D1_FIGURE_END_OPEN);
+                }
+            }
+            self.open = false;
+        }
+    }
+
     pub fn finish(&mut self) -> Result<ID2D1PathGeometry> {
         self.end_closed();
         if let Some(sink) = self.sink.take() {
@@ -708,6 +719,9 @@ pub fn arc_geometry(
             angle > std::f64::consts::PI,
             true,
         );
+        // This geometry is stroked. Closing it would add a straight chord
+        // from the arc endpoint back to 12 o'clock through the ring.
+        builder.end_open();
     }
     Ok(Some(builder.finish()?))
 }
@@ -751,7 +765,36 @@ pub fn arc_sweep_geometry(
     let start = at(start_deg);
     builder.begin_at(start.X as f64, start.Y as f64);
     builder.arc_to(at(start_deg + sweep_deg), radius, sweep_deg > 180.0, true);
+    builder.end_open();
     Ok(Some(builder.finish()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn length(geometry: &ID2D1PathGeometry) -> f32 {
+        unsafe { geometry.ComputeLength(None, 0.01).expect("geometry length") }
+    }
+
+    #[test]
+    fn partial_arcs_do_not_include_a_closing_chord() {
+        let engine = D2DEngine::new().expect("Direct2D engine");
+        let radius = 40.0_f32;
+        let fraction = 0.42_f64;
+        let progress = arc_geometry(&engine, point(50.0, 50.0), radius, fraction)
+            .expect("progress geometry")
+            .expect("non-empty progress geometry");
+        let expected = radius * (std::f64::consts::TAU * fraction) as f32;
+        assert!((length(&progress) - expected).abs() < 0.5);
+
+        let sweep_degrees = 79.2_f64;
+        let sweep = arc_sweep_geometry(&engine, point(50.0, 50.0), radius, 31.0, sweep_degrees)
+            .expect("sweep geometry")
+            .expect("non-empty sweep geometry");
+        let expected = radius * sweep_degrees.to_radians() as f32;
+        assert!((length(&sweep) - expected).abs() < 0.5);
+    }
 }
 
 static GLOBAL_ENGINE: std::sync::OnceLock<D2DEngine> = std::sync::OnceLock::new();
