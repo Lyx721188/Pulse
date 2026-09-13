@@ -180,30 +180,40 @@ pub fn evaluate(
 
     // A failed check is a *result*, so the streak counts regardless of the
     // alerts switch for readings — but is only **announced** when the
-    // setting is on, and config states are not failures.
-    if matches!(new.state, State::Unavailable(_)) && !new.is_cached {
-        let is_config_state = matches!(
-            new.state,
-            State::Unavailable(
-                Unavailability::ApiKeyMissing
-                    | Unavailability::SignedOut
-                    | Unavailability::NotSignedIn
-                    | Unavailability::NotOnWindows
-            )
-        );
-        let streak = memory.failure_streaks.entry(account.id()).or_insert(0);
-        if is_config_state {
-            *streak = 0;
-        } else {
-            *streak += 1;
-            if alerts_on_failure
-                && *streak == FAILURE_STREAK_LIMIT
-                && memory.failure_announced.insert(account.id())
-            {
-                events.push(AlertEvent::Failure {
-                    account: account.clone(),
-                    provider_name: new.provider().display_name().to_string(),
-                });
+    // setting is on.
+    //
+    // An unavailable reading is three things, not two — "counts" and
+    // "doesn't" left a *successful* answer (the provider replied and has no
+    // limits to report) sitting in the middle of a run of real failures
+    // without breaking it. `standing` below is the upstream three-way split.
+    if let State::Unavailable(reason) = new.state {
+        if !new.is_cached {
+            match standing(reason) {
+                // A setup step nobody has taken, or an app that simply is not
+                // open. True until somebody does something, so it is not
+                // news — and not evidence about whether the provider can be
+                // reached either: it neither counts nor clears.
+                Standing::Neutral => {}
+                // The provider answered. An answer ends an outage as surely
+                // as a figure does.
+                Standing::Answered => {
+                    memory.failure_streaks.insert(account.id(), 0);
+                    memory.failure_announced.remove(&account.id());
+                }
+                // Something that was working has stopped.
+                Standing::Failure => {
+                    let streak = memory.failure_streaks.entry(account.id()).or_insert(0);
+                    *streak += 1;
+                    if alerts_on_failure
+                        && *streak == FAILURE_STREAK_LIMIT
+                        && memory.failure_announced.insert(account.id())
+                    {
+                        events.push(AlertEvent::Failure {
+                            account: account.clone(),
+                            provider_name: new.provider().display_name().to_string(),
+                        });
+                    }
+                }
             }
         }
     } else if !new.is_cached {
@@ -214,6 +224,52 @@ pub fn evaluate(
     }
 
     events
+}
+
+/// What an unavailable reading means for a run of failures: a failure, a
+/// complete answer (an answer ends an outage), or neither — a setup step or
+/// a closed app, which is true until somebody acts and is not news.
+enum Standing {
+    Failure,
+    Answered,
+    Neutral,
+}
+
+fn standing(reason: Unavailability) -> Standing {
+    match reason {
+        Unavailability::ApiKeyRefused
+        | Unavailability::ClaudeLoginExpired
+        | Unavailability::CursorLoginExpired
+        | Unavailability::GrokLoginExpired
+        | Unavailability::SignedOut
+        | Unavailability::Unreachable
+        | Unavailability::UnreadableReply
+        | Unavailability::RateLimited
+        | Unavailability::ServerError
+        | Unavailability::CodexServerFailed => Standing::Failure,
+
+        // "No limits on this plan" is a complete answer. Classed neutral it
+        // cleared nothing, so an earlier outage's announcement stayed armed
+        // for the life of the record and the next real outage said nothing —
+        // the exact failure the three-way split exists to prevent.
+        Unavailability::NoLimitsReported | Unavailability::ZaiNoCodingPlan => Standing::Answered,
+
+        // Never set up, never signed in, or an app that simply is not
+        // running.
+        Unavailability::Loading
+        | Unavailability::NotConnected
+        | Unavailability::AwaitingResponse
+        | Unavailability::SignInRequired
+        | Unavailability::ClaudeSignInRequired
+        | Unavailability::CodexNotInstalled
+        | Unavailability::AntigravityNotRunning
+        | Unavailability::AntigravityNotAnswering
+        | Unavailability::CursorSignInRequired
+        | Unavailability::GrokSignInRequired
+        | Unavailability::NotSignedIn
+        | Unavailability::ApiKeyMissing
+        | Unavailability::NotOnWindows => Standing::Neutral,
+    }
 }
 
 fn evaluate_window(

@@ -126,14 +126,34 @@ const TABLE: &[Entry] = &[
     Entry { key: "Save", en: "Save", zh: "保存" },
     Entry { key: "Not available on Windows.", en: "Not available on Windows.", zh: "在 Windows 上暂不可用。" },
     Entry {
-        key: "Reads the language server Antigravity runs while it is open — the editor route has not been ported yet.",
-        en: "Reads the language server Antigravity runs while it is open — the editor route has not been ported yet.",
-        zh: "读取 Antigravity 打开时运行的语言服务——编辑器路线尚未移植。",
+        key: "Reads the language server Antigravity runs while it is open — figures exist only while it is running.",
+        en: "Reads the language server Antigravity runs while it is open — figures exist only while it is running.",
+        zh: "读取 Antigravity 打开时运行的语言服务器——仅在其运行期间可读。",
     },
     Entry {
-        key: "Reads the login Cursor stored in its own database — that store has not been ported yet.",
-        en: "Reads the login Cursor stored in its own database — that store has not been ported yet.",
-        zh: "读取 Cursor 存在自己数据库里的登录凭据——该存储尚未移植。",
+        key: "Reads the login Cursor already saved in its own database.",
+        en: "Reads the login Cursor already saved in its own database.",
+        zh: "读取 Cursor 存在自己数据库里的登录凭据。",
+    },
+    Entry {
+        key: "Open Antigravity to see its usage.",
+        en: "Open Antigravity to see its usage.",
+        zh: "打开 Antigravity 才能读到它的用量。",
+    },
+    Entry {
+        key: "Antigravity is open but didn't answer. Restarting it usually helps.",
+        en: "Antigravity is open but didn't answer. Restarting it usually helps.",
+        zh: "Antigravity 开着但没有响应，重启它通常能解决。",
+    },
+    Entry {
+        key: "Sign in to Cursor to see usage.",
+        en: "Sign in to Cursor to see usage.",
+        zh: "在 Cursor 中登录后才能读到用量。",
+    },
+    Entry {
+        key: "Cursor's saved login was refused. Open Cursor to renew it.",
+        en: "Cursor's saved login was refused. Open Cursor to renew it.",
+        zh: "Cursor 保存的登录被拒绝了。打开 Cursor 让它重新登录。",
     },
     Entry {
         key: "Reads a browser session cookie — browser access has not been ported yet.",

@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 
 /// The coding agents Pulse tracks.
 ///
-/// Fourteen of these are ported to Windows; `antigravity`, `cursor`,
-/// `ollamaCloud`, `grokBot` and `volcengine` keep their place in the model but
-/// are not fetchable here yet — see `is_ported_to_windows`.
+/// Sixteen of these are ported to Windows; `ollamaCloud`, `grokBot` and
+/// `volcengine` keep their place in the model but are not fetchable here
+/// yet — see `is_ported_to_windows`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Provider {
@@ -123,6 +123,8 @@ impl Provider {
             self,
             Provider::ClaudeCode
                 | Provider::Codex
+                | Provider::Antigravity
+                | Provider::Cursor
                 | Provider::Copilot
                 | Provider::Grok
                 | Provider::OpenCodeGo
@@ -139,12 +141,6 @@ impl Provider {
     /// Why the provider is not available on Windows, when it is not.
     pub fn windows_gap(&self) -> Option<&'static str> {
         match self {
-            Provider::Antigravity => {
-                Some("Reads the language server Antigravity runs while it is open — the editor route has not been ported yet.")
-            }
-            Provider::Cursor => {
-                Some("Reads the login Cursor stored in its own database — that store has not been ported yet.")
-            }
             Provider::OllamaCloud => {
                 Some("Reads a browser session cookie — browser access has not been ported yet.")
             }
@@ -205,9 +201,40 @@ impl Provider {
             Provider::OpenCodeGo => opencode_stored_key().is_some(),
             Provider::GlmCoding => glm_stored_key().is_some(),
             Provider::CommandCode => commandcode_stored_key().is_some(),
+            // The editor's install is the evidence: its language server only
+            // exists inside one.
+            Provider::Antigravity => antigravity_install().is_some(),
+            // The login database is both the evidence and the credential.
+            Provider::Cursor => cursor_database().exists(),
             _ => false,
         }
     }
+}
+
+/// Where an Antigravity install keeps its language server, if one is here.
+pub fn antigravity_install() -> Option<std::path::PathBuf> {
+    let base = std::env::var("LOCALAPPDATA").ok()?;
+    let programs = std::path::PathBuf::from(&base)
+        .join("Programs")
+        .join("Antigravity");
+    if programs.exists() {
+        return Some(programs);
+    }
+    let direct = std::path::PathBuf::from(base).join("Antigravity");
+    direct.exists().then_some(direct)
+}
+
+/// The SQLite database VS Code-derived editors keep global state in — for
+/// Cursor, also where its login lives.
+pub fn cursor_database() -> std::path::PathBuf {
+    let base = crate::data_dir()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    base.join("Cursor")
+        .join("User")
+        .join("globalStorage")
+        .join("state.vscdb")
 }
 
 pub fn home_path(rel: &str) -> std::path::PathBuf {
@@ -572,6 +599,16 @@ pub enum Unavailability {
     UnreadableReply,
     RateLimited,
     ServerError,
+    /// Antigravity's limits live in a server it only runs while it is open.
+    AntigravityNotRunning,
+    /// Antigravity **is** open, and every helper it runs refused this RPC —
+    /// a version bump, or the app still starting.
+    AntigravityNotAnswering,
+    /// Cursor has never been signed in on this PC, so there is no login to
+    /// borrow.
+    CursorSignInRequired,
+    /// There is a Cursor login, and the account refused it.
+    CursorLoginExpired,
     /// Not ported to Windows yet — named once, in Settings only.
     NotOnWindows,
     ZaiNoCodingPlan,
@@ -599,6 +636,14 @@ impl Unavailability {
             Unavailability::UnreadableReply => "Couldn't read the reply.",
             Unavailability::RateLimited => "Checking too often — easing off.",
             Unavailability::ServerError => "The service returned an error.",
+            Unavailability::AntigravityNotRunning => "Open Antigravity to see its usage.",
+            Unavailability::AntigravityNotAnswering => {
+                "Antigravity is open but didn't answer. Restarting it usually helps."
+            }
+            Unavailability::CursorSignInRequired => "Sign in to Cursor to see usage.",
+            Unavailability::CursorLoginExpired => {
+                "Cursor's saved login was refused. Open Cursor to renew it."
+            }
             Unavailability::NotOnWindows => "notOnWindows",
             Unavailability::ZaiNoCodingPlan => "zaiNoCodingPlan",
         })

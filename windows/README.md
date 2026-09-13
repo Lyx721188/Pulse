@@ -48,10 +48,11 @@ pulse.exe --json | jq -r '.accounts[] | "\(.name) \(.headline.usedPercent // "�
 
 ## What is ported
 
-Reading logic, window selection, caching and reporting are ported for 12 of
+Reading logic, window selection, caching and reporting are ported for 14 of
 the 17 providers; the ring, card, berth and settings UI are complete. The
-five gaps below are routes the macOS app reaches through macOS-only
-machinery, listed in Settings with the reason rather than shown as broken.
+three gaps below are routes the macOS app reaches through machinery this
+port does not have yet, listed in Settings with the reason rather than shown
+as broken.
 
 | Provider | Route | Status |
 | --- | --- | --- |
@@ -66,8 +67,8 @@ machinery, listed in Settings with the reason rather than shown as broken.
 | MiniMax | Coding Plan API, overseas + mainland | ✅ Ported |
 | Command Code | Subscriptions + credits + plan table | ✅ Ported |
 | DeepSeek | Balance + basis (since top-up / your budget) | ✅ Ported |
-| Antigravity | Language server while the editor is open | ⬜ Not ported |
-| Cursor | Cursor's own login database | ⬜ Not ported |
+| Antigravity | Language server while the editor is open (process table, PEB command line, owned-TCP ports) | ✅ Ported |
+| Cursor | Cursor's own login database (read-only SQLite) + usage summary API | ✅ Ported |
 | Ollama Cloud | Browser session cookie | ⬜ Not ported |
 | Grok Bot (in Cursor) | Cursor's saved login | ⬜ Not ported |
 | Volcengine | Signed usage API (HMAC access keys) | ⬜ Not ported |
@@ -77,7 +78,7 @@ machinery, listed in Settings with the reason rather than shown as broken.
 Two crates:
 
 - **`pulse-core`** — everything without a window: the provider model, the
-  11 service implementations, DPAPI-encrypted key storage (the Keychain's
+  13 service implementations, DPAPI-encrypted key storage (the Keychain's
   counterpart here), the reading cache with its reconcile rules, adaptive
   refresh pacing, alerts, localization (English + 简体中文) and the `--json`
   report. Compiles anywhere.

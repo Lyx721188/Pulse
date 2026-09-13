@@ -9,6 +9,21 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
 chrono = { workspace = true }
+base64 = "0.22"
+# Only the one table is read, but it is Cursor's, while the editor holds it
+# open — the bundled engine keeps the read self-contained.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Globalization"] }
+windows = { version = "0.61", features = [
+    "Win32_Globalization",
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+    "Win32_System_Kernel",
+    "Wdk_System_Threading",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+] }

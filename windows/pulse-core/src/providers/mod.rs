@@ -2,10 +2,12 @@
 //! that product actually offers — documented or borrowed — and invents
 //! nothing on the way.
 
+pub mod antigravity;
 pub mod claude_code;
 pub mod codex;
 pub mod command_code;
 pub mod copilot;
+pub mod cursor;
 pub mod deepseek;
 pub mod device_login;
 pub mod grok;
@@ -103,6 +105,8 @@ impl Services {
         let list: Vec<Arc<dyn ProviderService>> = vec![
             Arc::new(claude_code::ClaudeCodeService::new(http.clone())),
             Arc::new(codex::CodexService::new(http.clone())),
+            Arc::new(antigravity::AntigravityService::new()),
+            Arc::new(cursor::CursorService::new()),
             Arc::new(copilot::CopilotService::new(http.clone())),
             Arc::new(grok::GrokService::new(http.clone())),
             Arc::new(opencode::OpenCodeService::new(http.clone())),

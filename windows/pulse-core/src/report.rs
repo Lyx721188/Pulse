@@ -355,7 +355,7 @@ mod tests {
         // The flag has to be on **every** window, not only the one that sets
         // it, or a script cannot filter on its absence.
         let account = AccountKey::primary(Provider::CommandCode);
-        let mut hourly = UsageWindow::new("five-hour", Kind::FiveHour, None, 0.25, 5 * 3_600, None);
+        let hourly = UsageWindow::new("five-hour", Kind::FiveHour, None, 0.25, 5 * 3_600, None);
         let mut monthly = UsageWindow::new("monthly", Kind::Monthly, None, 0.58, 30 * 86_400, None);
         monthly.estimate = Some(Estimate::PlanPrice);
 

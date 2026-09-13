@@ -710,6 +710,16 @@ impl SettingsApp {
                     "Reads the login this tool already saved on this PC.",
                 ))
                 .into(),
+            Provider::Antigravity => self
+                .muted(&pulse_core::localization::t(
+                    "Reads the language server Antigravity runs while it is open — figures exist only while it is running.",
+                ))
+                .into(),
+            Provider::Cursor => self
+                .muted(&pulse_core::localization::t(
+                    "Reads the login Cursor already saved in its own database.",
+                ))
+                .into(),
             Provider::Copilot => {
                 let signed_in = pulse_core::secrets::key_for("copilot").is_some();
                 StackPanel::new()
