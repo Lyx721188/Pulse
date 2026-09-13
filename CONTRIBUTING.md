@@ -19,7 +19,7 @@ Provider routes, auth, cookies, and extra-account login belong in [Docs/provider
 | How it works *now* | Topic docs under `Docs/` | Same patch as the code |
 | Why / what failed / measured once | [Docs/decisions/](Docs/decisions/README.md) | When the *reason* changes, or a new lesson is worth keeping |
 | Human process | This file | When the process changes |
-| User-facing product copy | [README.md](README.md) and [README.zh-CN.md](README.zh-CN.md) | Keep bilingual parity |
+| User-facing product copy | [README.md](README.md) | Written in Simplified Chinese |
 
 `Docs/` is the capitalized directory. Do not add a second `docs/` tree.
 
@@ -53,7 +53,7 @@ Before merging a docs-or-behaviour change:
 - [ ] Provider/auth/cookie detail is only in `Docs/providers/` (or a provider investigation note it points at).
 - [ ] Current facts (counts, intervals, which accounts are multi) match the code you just read.
 - [ ] Historical measurements are labelled historical.
-- [ ] README and README.zh-CN.md still match if you touched user-facing claims.
+- [ ] The README still matches the code if you touched user-facing claims.
 - [ ] Links from CLAUDE.md’s “Read by task” table still resolve.
 - [ ] You did not add build or shipping instructions that contradict [Docs/build-from-source.md](Docs/build-from-source.md) / [Docs/releasing.md](Docs/releasing.md).
 

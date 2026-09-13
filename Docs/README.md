@@ -39,4 +39,4 @@ When those notes disagree with `providers/README.md` or the code, the code and t
 
 ## User-facing
 
-- [../README.md](../README.md) / [../README.zh-CN.md](../README.zh-CN.md) — product pages. Keep bilingual parity. They are not the architecture source of truth.
+- [../README.md](../README.md) — the product page, written in Simplified Chinese. It is not the architecture source of truth.
