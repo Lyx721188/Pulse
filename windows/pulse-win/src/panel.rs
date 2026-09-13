@@ -42,6 +42,10 @@ const RETREAT_DELAY_MS: i64 = 1500;
 const PEEK_PX: f64 = 5.0;
 /// How close a drag must come to an edge to fuse with it, in design units.
 const FUSE_DISTANCE: f64 = 28.0;
+/// The magnetic lean: how far a fully-woken ring tips toward the pointer,
+/// and at what distance the pull saturates, in design units.
+const LEAN_PULL: f64 = 4.5;
+const LEAN_REACH: f64 = 9.0;
 /// The timer hands out 30 ms frames; the springs step in the same units.
 const TICK_SECONDS: f64 = 0.03;
 
@@ -612,7 +616,11 @@ impl PanelWindow {
                     .unwrap_or(0.0);
                 let mut model = entry.ring.clone();
                 model.halo = wake;
-                let center = ring_center(&self.m, index, rail, self.edge);
+                let center = magnetic_lean(
+                    ring_center(&self.m, index, rail, self.edge),
+                    self.cursor,
+                    wake,
+                );
                 let _ = draw_ring(
                     &painter,
                     center,
@@ -1348,6 +1356,28 @@ fn spring_step(x: &mut f64, v: &mut f64, target: f64, response: f64, damping: f6
 /// Whether a spring has come to rest on its target.
 fn settled(x: f64, v: f64, target: f64) -> bool {
     (x - target).abs() < 0.002 && v.abs() < 0.01
+}
+
+/// Where a ring sits under the pointer's pull: tipped up to `LEAN_PULL`
+/// design units toward the cursor, in proportion to the ring's own
+/// emphasis. The magnitude passes through zero as the cursor crosses the
+/// centre, so the lean glides instead of snapping across.
+fn magnetic_lean(
+    center: windows_numerics::Vector2,
+    cursor: (f64, f64),
+    wake: f64,
+) -> windows_numerics::Vector2 {
+    let dx = cursor.0 - center.X as f64;
+    let dy = cursor.1 - center.Y as f64;
+    let d = (dx * dx + dy * dy).sqrt();
+    if d < 0.001 || wake <= 0.0 {
+        return center;
+    }
+    let strength = (d / LEAN_REACH).min(1.0) * LEAN_PULL * wake;
+    crate::d2d::point(
+        center.X + (dx / d * strength) as f32,
+        center.Y + (dy / d * strength) as f32,
+    )
 }
 
 fn work_dpi(monitor_rect: &RECT) -> f64 {
