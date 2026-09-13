@@ -122,6 +122,25 @@ pub fn arrow_cursor() -> HCURSOR {
     unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() }
 }
 
+/// The embedded application icon — resource #1, written by build.rs — at
+/// the class-icon size. Window classes share this so Alt+Tab and any
+/// chrome show the real mark.
+pub fn app_class_icon() -> HICON {
+    unsafe {
+        let size = GetSystemMetrics(SM_CXICON).max(32);
+        let handle = LoadImageW(
+            Some(hinstance()),
+            PCWSTR(1usize as _),
+            IMAGE_ICON,
+            size,
+            size,
+            LR_DEFAULTCOLOR,
+        )
+        .unwrap_or_default();
+        HICON(handle.0)
+    }
+}
+
 pub use windows::Win32::Foundation::RECT;
 
 /// The real Win11 window materials, in three DWM attributes: Mica behind

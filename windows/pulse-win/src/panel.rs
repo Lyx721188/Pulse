@@ -236,6 +236,7 @@ impl PanelWindow {
                 lpszClassName: class_name,
                 hInstance: winutil::hinstance(),
                 hCursor: winutil::arrow_cursor(),
+                hIcon: winutil::app_class_icon(),
                 ..Default::default()
             };
             RegisterClassW(&wc);
@@ -616,14 +617,16 @@ impl PanelWindow {
                     .unwrap_or(0.0);
                 let mut model = entry.ring.clone();
                 model.halo = wake;
-                let center = magnetic_lean(
-                    ring_center(&self.m, index, rail, self.edge),
-                    self.cursor,
-                    wake,
-                );
+                let base = ring_center(&self.m, index, rail, self.edge);
+                let center = magnetic_lean(base, self.cursor, wake);
+                // The mark leans further than the ring around it: the same
+                // pull at 60% strength, measured from the tipped centre, so
+                // the icon reads as the attracted thing inside.
+                let mark = magnetic_lean(center, self.cursor, wake * 0.6);
                 let _ = draw_ring(
                     &painter,
                     center,
+                    mark,
                     self.m.s(dock::RING_DIAMETER) * ring_scale * (1.0 + 0.1 * wake),
                     self.m.s(dock::RING_LINE_WIDTH),
                     self.m.scale,

@@ -35,8 +35,26 @@ pub struct TrayIcon {
     poll: Option<Sender<()>>,
 }
 
-/// A tiny runtime-drawn icon: the pulse ring, in the app's good green.
+/// The tray's icon: the embedded application mark when it loads, the old
+/// runtime-drawn pulse ring when it somehow doesn't.
 fn build_icon() -> HICON {
+    // The application icon, embedded by build.rs as resource #1 — the real
+    // mark, sized for the tray's own small-icon metric.
+    unsafe {
+        let size = GetSystemMetrics(SM_CXSMICON).max(16);
+        let handle = LoadImageW(
+            Some(winutil::hinstance()),
+            windows::core::PCWSTR(1usize as _),
+            IMAGE_ICON,
+            size,
+            size,
+            LR_DEFAULTCOLOR,
+        )
+        .unwrap_or_default();
+        if !handle.is_invalid() {
+            return HICON(handle.0);
+        }
+    }
     // A 32×32 ring drawn with GDI into a colour bitmap. Direct2D would be
     // nicer, but the tray wants an HICON, and four GDI calls make one.
     unsafe {
@@ -125,6 +143,7 @@ impl TrayIcon {
                 lpfnWndProc: Some(tray_wndproc),
                 lpszClassName: class_name,
                 hInstance: winutil::hinstance(),
+                hIcon: winutil::app_class_icon(),
                 ..Default::default()
             };
             RegisterClassW(&wc);

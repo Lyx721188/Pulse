@@ -82,6 +82,7 @@ impl RingModel {
 pub fn draw_ring(
     painter: &Painter,
     center: Vector2,
+    mark: Vector2,
     diameter: f64,
     line_width: f64,
     scale: f64,
@@ -157,18 +158,21 @@ pub fn draw_ring(
     }
 
     // The provider's mark in the middle — the icon when one is known, the
-    // monogram otherwise. Dimmed while there is no reading, so the rail
-    // shows at a glance which providers it has data for.
+    // monogram otherwise. It rides `mark`, its own point: the magnetic
+    // lean tips it a little further than the ring, so the mark reads as
+    // the attracted thing inside the attracted circle. Dimmed while there
+    // is no reading, so the rail shows at a glance which providers it has
+    // data for.
     let mark_alpha = if model.has_reading { 1.0 } else { 0.35 };
     let mut drew_icon = false;
     if let Some(key) = &model.icon {
         if let Some(bitmap) = crate::assets::bitmap_for(painter.engine, key) {
             let size = (centre_diameter * 0.58) as f32;
             let dest = D2D_RECT_F {
-                left: center.X - size / 2.0,
-                top: center.Y - size / 2.0,
-                right: center.X + size / 2.0,
-                bottom: center.Y + size / 2.0,
+                left: mark.X - size / 2.0,
+                top: mark.Y - size / 2.0,
+                right: mark.X + size / 2.0,
+                bottom: mark.Y + size / 2.0,
             };
             // Downscaling from the 256-px masters deserves the better
             // filter, which only the device-context DrawBitmap carries.
@@ -198,7 +202,7 @@ pub fn draw_ring(
         let half = centre_diameter as f32 / 2.0;
         painter.text(
             &model.monogram,
-            crate::d2d::rect(center.X - half, center.Y - half, half * 2.0, half * 2.0),
+            crate::d2d::rect(mark.X - half, mark.Y - half, half * 2.0, half * 2.0),
             font_size,
             windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_SEMI_BOLD,
             &text_brush,
