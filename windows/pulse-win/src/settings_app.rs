@@ -54,8 +54,12 @@ impl Shared {
     fn generation(&self) -> u64 {
         self.snapshot.lock().unwrap().generation
     }
-    fn take_status(&self) -> HashMap<String, String> {
-        std::mem::take(&mut self.snapshot.lock().unwrap().status)
+    /// A copy of the latest statuses. This must not drain: the map stays
+    /// put so a render that lands between pushes — an extra watcher fire,
+    /// a nav — still reads the last known lines instead of an empty frame
+    /// that makes every status row blink.
+    fn read_status(&self) -> HashMap<String, String> {
+        self.snapshot.lock().unwrap().status.clone()
     }
     fn send(&self, action: SettingsAction) {
         let _ = self.actions.send(action);
@@ -86,9 +90,15 @@ impl SettingsHost {
         self.shared.clone()
     }
 
-    /// One provider's status line for the Accounts page.
+    /// One provider's status line for the Accounts page. A line that
+    /// hasn't changed doesn't move the generation — the store polls every
+    /// 250 ms and re-rendering the whole window four times a second for
+    /// identical text is what made the rows flicker.
     pub fn set_status(&self, provider_raw: &str, text: String) {
         let mut snapshot = self.shared.snapshot.lock().unwrap();
+        if snapshot.status.get(provider_raw) == Some(&text) {
+            return;
+        }
         snapshot.status.insert(provider_raw.to_string(), text);
         snapshot.generation += 1;
     }
@@ -113,6 +123,10 @@ impl SettingsHost {
 /// Mounts one settings window on the calling (main) thread and pumps it
 /// until the user closes it.
 pub(crate) fn serve_once(shared: &Arc<Shared>) {
+    // The window is up: flips the worker's gate so statuses start flowing.
+    // `show` already set this for the tray path; setting it here too covers
+    // a launch that skipped the host — `pulse --settings`.
+    shared.alive.store(true, Ordering::SeqCst);
     SHARED.with(|cell| *cell.borrow_mut() = Some(shared.clone()));
     let _ = App::run_component::<SettingsApp>(());
     shared.alive.store(false, Ordering::SeqCst);
@@ -238,7 +252,7 @@ impl Component for SettingsApp {
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         match message {
             Message::Tick => {
-                self.status = self.shared.take_status();
+                self.status = self.shared.read_status();
             }
             Message::Nav(tag) => {
                 self.page = tag.as_deref().map(Page::from_tag).unwrap_or(self.page);
