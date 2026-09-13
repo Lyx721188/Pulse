@@ -73,36 +73,49 @@ jobs:
           }
           Write-Host "smoke test OK: $($json.accounts.Count) account(s) on the rail"
 
-      # WinUI can report a successful launch and still raise a delayed
-      # stowed exception while applying the window backdrop. Keep this alive
-      # past that point so a release cannot ship a settings window that dies
-      # when the tray menu opens it.
-      - name: --settings startup smoke test
+      # The self-contained setup copies DLLs, PRI resource indexes and locale
+      # folders next to the exe. All three are required by WinUI at runtime.
+      - name: Zip the release folder
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath ./target/release/pulse.exe -ArgumentList "--settings" -PassThru
+          $release = (Resolve-Path target/release).Path
+          $staging = Join-Path $env:RUNNER_TEMP "pulse-windows-x64"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+
+          Copy-Item (Join-Path $release "pulse.exe") $staging
+          Get-ChildItem $release -File |
+            Where-Object { $_.Extension -in ".dll", ".pri" } |
+            Copy-Item -Destination $staging
+          Get-ChildItem $release -Directory |
+            Where-Object { $_.Name -notin ".fingerprint", "build", "deps", "examples", "incremental" } |
+            Copy-Item -Destination $staging -Recurse
+
+          $archive = Join-Path $release "pulse-windows-x64.zip"
+          Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $archive -Force
+          Write-Host (Get-Item $archive).Length
+
+      # Exercise the files users actually download. Missing PRI files can let
+      # WinUI launch and then fail several seconds later with 0xc000027b.
+      - name: Packaged --settings smoke test
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP "pulse-package-smoke"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Expand-Archive target/release/pulse-windows-x64.zip -DestinationPath $package -Force
+
+          $process = Start-Process -FilePath (Join-Path $package "pulse.exe") -ArgumentList "--settings" -PassThru
           try {
-            Start-Sleep -Seconds 8
+            Start-Sleep -Seconds 20
             $process.Refresh()
             if ($process.HasExited) {
-              throw "--settings exited with code $($process.ExitCode)"
+              throw "packaged --settings exited with code $($process.ExitCode)"
             }
-            Write-Host "settings smoke test OK: process $($process.Id) stayed alive"
+            Write-Host "packaged settings smoke test OK: process $($process.Id) stayed alive"
           } finally {
             if (-not $process.HasExited) {
               Stop-Process -Id $process.Id -Force
             }
           }
-
-      # The build's self-contained step copies the WinAppSDK runtime next to
-      # the exe; the settings window cannot start without those DLLs, so the
-      # artifact is the whole folder, zipped. (Paths are relative to
-      # `windows/`, the job's working directory.)
-      - name: Zip the release folder
-        shell: pwsh
-        run: |
-          Compress-Archive -Path target/release/pulse.exe, target/release/*.dll -DestinationPath target/release/pulse-windows-x64.zip -Force
-          Write-Host (Get-Item target/release/pulse-windows-x64.zip).Length
 
       - name: Upload pulse-windows-x64
         uses: actions/upload-artifact@v4
