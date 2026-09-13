@@ -3,8 +3,8 @@ fn main() {
     // settings window works without a framework-package install.
     windows_reactor_setup::as_self_contained();
 
-    // The application icon — the macOS AppIcon rendered into a Windows
-    // .ico — plus the version strings Explorer and the taskbar read.
+    // The bundled Windows icon plus the version strings Explorer and the
+    // taskbar read.
     let mut res = winresource::WindowsResource::new();
     res.set_icon("assets/app.ico");
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();

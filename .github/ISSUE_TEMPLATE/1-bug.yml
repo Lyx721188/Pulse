@@ -76,10 +76,10 @@ body:
       required: true
 
   - type: input
-    id: macos
+    id: windows
     attributes:
-      label: macOS version / 系统版本
-      placeholder: "macOS 26.1"
+      label: Windows version / 系统版本
+      placeholder: "Windows 11 24H2"
     validations:
       required: true
 

@@ -1,17 +1,17 @@
 name: Windows build
 
-# Builds the Rust rewrite in `windows/` — a Windows-native port of Pulse.
-# The Swift app in `Sources/` has its own workflow (ci.yml) and is untouched.
+# Builds the Windows-native Rust application in `windows/`.
 
 on:
   push:
     branches: ["**"]
     # A windows-v* tag publishes the build as a Release (see the release job).
-    # macOS releases live on v* tags and belong to release.yml — the prefixes
-    # keep the two pipelines off each other's toes.
     tags: ["windows-v*"]
     paths:
       - "windows/**"
+      - "README.md"
+      - "Docs/**"
+      - "THIRD_PARTY_NOTICES.md"
       - ".github/workflows/windows.yml"
   pull_request:
     paths:

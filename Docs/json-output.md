@@ -1,81 +1,58 @@
-# `Pulse --json`
+# `pulse.exe --json`
 
-Owns: the JSON contract other people's status lines are built on. Where the figures come from and how often they move: [refresh-and-data.md](refresh-and-data.md).
+这是状态栏、终端提示符和脚本使用的 JSON 契约。命令只读取本地缓存，不发起网络
+请求，也不写入凭据或设置。
 
-```bash
-/Applications/Pulse.app/Contents/MacOS/Pulse --json
+```powershell
+.\pulse.exe --json
 ```
 
-Source: [`Sources/Pulse/Usage/UsageReport.swift`](../Sources/Pulse/Usage/UsageReport.swift). Dispatched in `PulseMain` before `LegacyDefaults.migrateIfNeeded()`, alongside `--statusline`.
+在源码中，报告模型位于
+[`windows/pulse-core/src/report.rs`](../windows/pulse-core/src/report.rs)，命令行入口
+位于 [`windows/pulse-win/src/main.rs`](../windows/pulse-win/src/main.rs)。
 
-## It prints the cache and never fetches
+## 输出结构
 
-A status line polls every couple of seconds. Seventeen providers cannot be asked at that rate, and a command that opened network connections and touched the keychain every time a terminal redrew would be a worse citizen than no command at all.
-
-So this reads what the **running app** last banked and says how old it is. Every account carries `observedAt` and `ageSeconds`; decide for yourself what counts as too old. With the app not running the figures simply stop moving — they are never presented as current. An installation where the app has never run prints an empty rail rather than a guess at what would be switched on.
-
-It **reads and never writes**. `AppSettings.storedRail()` exists for this: `restored()` stamps `hasRun`, the offered list and the resolved enabled set on its way through, which is right once at launch and wrong for something running every two seconds.
-
-## Nothing in it is translated
-
-Window names are localized in the app and would change under a script's feet, so `UsageWindow.name` is **not a field**. What is there instead:
-
-- `kind` — a flat token: `fiveHour`, `weekly`, `spend`, `monthly`, `balance`, or `other:<seconds>`. `balance` is prepaid credit, which is **not a limit**: it never turns over, so `reportsLength` is false and `resetsAt` is null on those rows ([providers/deepseek.md](providers/deepseek.md)). `UsageWindow.Kind` is `Codable`, but its synthesised form is an object with an associated value in it; fine on disk, awkward in a `jq` filter.
-- `scope`, `name` — product names, the same in every language.
-- `estimated` / `estimatedFrom` — true where the provider said how much of an allowance is **left** and never how large it is, so the denominator behind `usedFraction` was inferred; `estimatedFrom` is a stable token saying which inference — `planPrice` ([providers/command-code.md](providers/command-code.md)), `sinceTopUp` or `yourBudget` ([providers/deepseek.md](providers/deepseek.md)). The wording that marks it on screen is localized; neither of these is, which is why they are not folded into `scope`.
-- `label` — the user's own name for an added account, theirs to have written in any language.
-
-## Shape
-
-```
-generatedAt            ISO 8601
+```text
+generatedAt            ISO 8601 时间
 accounts[]
-  id                   "claudeCode", "claudeCode#<slot>" for an added account
-  provider             the Provider case
-  name                 the product's name
-  label                the user's name for it; the product's name for a first account
-  plan                 when the provider names one
-  creditBalance        when the provider reports one
-  observedAt           when this reading was taken, absent when there is none
-  ageSeconds           generatedAt − observedAt
-  source               actual origin of the saved reading, absent for older caches
-  settingsURL          pulse://account/<percent-encoded account id>
-  headline{}           the window the ring shows: windowId, usedPercent, exhausted, resetsAt
-  windows[]
-    id, kind, scope
-    usedPercent        the figure the ring shows — the display rule, so a
-                       status line agrees with the panel
-    usedFraction       the reading itself, unrounded
-    exhausted          the provider's word, not usedPercent >= 100
-    windowSeconds
-    reportsLength      false when windowSeconds is only a sort key. Do not divide by it.
-    estimated          true when the denominator was inferred, not reported
-    estimatedFrom      which inference: planPrice | sinceTopUp | yourBudget
-    resetsAt
+  id                   账号标识
+  provider             服务商标识
+  name                 服务商名称
+  label                用户为账号设置的名称
+  plan                 服务商报告的套餐（如果有）
+  creditBalance        服务商报告的余额（如果有）
+  observedAt           本次读数时间（如果有）
+  ageSeconds           generatedAt - observedAt
+  source               读数实际来源
+  settingsURL          设置页或账号链接（如果有）
+  headline{}           当前最值得展示的限额
+  windows[]            全部限额窗口
+    id
+    kind               fiveHour | weekly | spend | monthly | balance | other:<seconds>
+    scope
+    usedPercent        展示用百分比
+    usedFraction       未四舍五入的原始比例
+    exhausted          服务商是否明确报告已耗尽
+    windowSeconds      窗口长度（如果服务商报告）
+    reportsLength      是否确实报告了窗口长度
+    estimated          分母是否为推算值
+    estimatedFrom      推算来源（如果有）
+    resetsAt           重置时间（如果有）
 ```
 
-`headline` repeats a window from `windows` on purpose: the common case is one number in a status line, and making every consumer re-implement "which limit matters" — the fullest, unless one is pinned — is how they end up disagreeing with the ring.
+`headline` 重复 `windows` 中的一个窗口，方便常见状态栏直接显示。消费者应把未知
+字段当作可忽略字段，并允许未来增加新的 `kind` 或 `source`。
 
-`usedPercent` carries the display rule, so anything used never reads 0% and not quite full never reads 100%. `UsageWindow.percentValue` is the one copy of it; `percentText` is that plus a `%`.
+`usedPercent` 遵循 UI 的展示规则：只要服务商报告有消耗，就不会显示为 0%；尚未
+完全耗尽时也不会被错误显示为 100%。`estimated` 为 `true` 时，服务商只报告了
+剩余量或余额，应用没有把推算值伪装成服务商报告的精确比例。
 
-`source` is a stable token: `endpoint`, `statusLine`, `desktopSession`, `appServer`, `languageServer`, `webSession`, or `arkCLI`. It describes where the saved figures came from, not the user's current route preference or the outcome of a later failed check. Old cache files carry no source; Pulse does not reconstruct one from today's settings. Consumers should tolerate future source tokens.
+## 示例
 
-`settingsURL` exists even without a reading. Added-account `#` separators are encoded as `%23`, not URL fragments. The bundled app opens that account's settings. Ready-to-use consumers and installation: [integrations.md](integrations.md).
-
-## Examples
-
-```bash
-# every account, one line each
-Pulse --json | jq -r '.accounts[] | "\(.name) \(.headline.usedPercent // "–")%"'
-
-# the limit closest to biting, across everything
-Pulse --json | jq -r '[.accounts[] | select(.headline) | {n:.name, p:.headline.usedPercent}]
-                      | max_by(.p) | "\(.n) \(.p)%"'
-
-# anything whose figures have gone stale
-Pulse --json | jq -r '.accounts[] | select((.ageSeconds // 1e9) > 1800) | .name'
+```powershell
+.\pulse.exe --json | ConvertFrom-Json
 ```
 
-## Adding a field
-
-Additive changes are safe; renaming or removing one breaks somebody's status line. `UsageReportTests` pins the shape — add to it in the same patch.
+脚本应根据 `observedAt` 或 `ageSeconds` 判断数据是否过期，不应把没有读数的账号
+当作 0% 使用，也不应把 `balance` 当作会自动重置的限额窗口。

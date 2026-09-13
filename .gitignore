@@ -1,25 +1,14 @@
-# macOS
+# Rust build output
+target/
+windows/target/
+
+# OS/editor files
 .DS_Store
-
-# Swift Package Manager
-.build/
-.swiftpm/
-
-# Xcode user and build data
-DerivedData/
-xcuserdata/
-*.xcuserstate
-
-# Assembled app bundle
-build.noindex/
+.vscode/
+.idea/
 
 # OpenCode triage local install
 .github/opencode/node_modules/
 
-# Created by check-localization.sh on every run.
-Scripts/__pycache__/
-
-# Raycast development output
-Integrations/raycast/node_modules/
-Integrations/raycast/dist/
-Integrations/raycast/raycast-env.d.ts
+# Local test and coverage output
+coverage/

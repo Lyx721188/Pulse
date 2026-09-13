@@ -2,21 +2,7 @@
 
 Pulse bundles provider marks derived from [Lobe Icons](https://github.com/lobehub/lobe-icons):
 
-- `Sources/Pulse/Resources/claude.svg`
-- `Sources/Pulse/Resources/openai.svg`
-- `Sources/Pulse/Resources/antigravity.svg`
-- `Sources/Pulse/Resources/cursor.svg`
-- `Sources/Pulse/Resources/opencode.svg`
-- `Sources/Pulse/Resources/kimi.svg`
-- `Sources/Pulse/Resources/ollama.svg`
-- `Sources/Pulse/Resources/zai.svg`
-- `Sources/Pulse/Resources/qingyan.svg`
-- `Sources/Pulse/Resources/minimax.svg`
-- `Sources/Pulse/Resources/github.svg`
-- `Sources/Pulse/Resources/volcengine.svg`
-- `Sources/Pulse/Resources/grok.svg`
-- `Sources/Pulse/Resources/xai.svg`
-- `Sources/Pulse/Resources/deepseek.svg`
+- `windows/pulse-win/assets/icons/*.png`
 
 Lobe Icons is distributed under the MIT License:
 
@@ -44,11 +30,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-Pulse also links against [Sparkle](https://sparkle-project.org), which handles
-updates and is distributed under the MIT License.
-
-The Windows port under `windows/` ships copies of the same Lobe-derived
-provider marks, rasterised for its own renderer
+The Windows app ships copies of the Lobe-derived provider marks, rasterised for its own renderer
 (`windows/pulse-win/assets/icons`). It is written in Rust against the
 Microsoft Windows SDK via the [`windows`](https://github.com/microsoft/windows-rs)
 crate, and links against further crates from crates.io — overwhelmingly

@@ -1,42 +1,17 @@
 # Docs
 
-Maintained map. Change the topic file that owns a behaviour in the same patch as the code. [CLAUDE.md](../CLAUDE.md) is a short AI entry; [CONTRIBUTING.md](../CONTRIBUTING.md) is the human process.
+这里保留 Windows 版本仍在使用的服务商资料、接口说明和行为约定。应用源码和构建
+入口统一位于 [`windows/`](../windows/)；仓库不再包含 macOS/Swift 实现。
 
-`Docs/` is the only docs tree. Investigation notes that are not “how it works now” stay here as historical pages rather than being folded into current architecture.
+## 开始阅读
 
-## Start here
-
-| Doc | Owns |
+| 文档 | 内容 |
 |---|---|
-| [architecture.md](architecture.md) | App shell, settings state, first-run / offer-once, login item, defaults domain |
-| [ui/README.md](ui/README.md) | Panel geometry, input, glass/rings, settings window |
-| [refresh-and-data.md](refresh-and-data.md) | Refresh loop, cache, activity, ledger, forecast, estimate |
-| [notifications.md](notifications.md) | When Pulse posts a notification, and what it refuses to say |
-| [development.md](development.md) | Localization, resources, layout budgets, how to add UI |
-| [testing.md](testing.md) | What `swift test` covers, fixtures, why the gaps are gaps |
-| [json-output.md](json-output.md) | The `--json` contract for status lines and scripts |
-| [integrations.md](integrations.md) | Raycast, tmux, sketchybar, shell prompt setup and account links |
-| [build-from-source.md](build-from-source.md) | Toolchain, `swift build`, `#Preview`, local run |
-| [releasing.md](releasing.md) | Tag, bundle, Sparkle, DMG, CI |
-| [providers/README.md](providers/README.md) | Per-provider routes, auth, cookies, extra accounts |
-| [decisions/README.md](decisions/README.md) | Why / failure lessons (historical) |
+| [json-output.md](json-output.md) | `pulse.exe --json` 的状态栏输出约定 |
+| [providers/README.md](providers/README.md) | 各服务商的读取通道、鉴权和本地数据来源 |
+| [grok-bot-usage.md](grok-bot-usage.md) | Grok Bot / Cursor 的历史调查 |
+| [ollama-cloud.md](ollama-cloud.md) | Ollama Cloud 会话读取的历史调查 |
+| [plan.md](plan.md) | Windows 移植的历史工作笔记 |
 
-## Providers
-
-Current routes and sign-in behaviour live in [providers/README.md](providers/README.md). Do not duplicate them in architecture or UI docs.
-
-Older investigation notes that are still useful as history (not the live contract):
-
-- [ollama-cloud.md](ollama-cloud.md) — how Ollama Cloud usage is read from a signed-in page (no quota API).
-- [grok-bot-usage.md](grok-bot-usage.md) — historical Grok Bot / Cursor “Sand” investigation.
-
-When those notes disagree with `providers/README.md` or the code, the code and the providers README win.
-
-## Also in this folder
-
-- [plan.md](plan.md) — working notes, not a contract.
-- Screenshots and `demo.gif` used by the READMEs.
-
-## User-facing
-
-- [../README.md](../README.md) — the product page, written in Simplified Chinese. It is not the architecture source of truth.
+用户入口是仓库根目录的 [`README.md`](../README.md)。开发、测试和发布以
+[`windows/README.md`](../windows/README.md) 及 GitHub Actions 为准。

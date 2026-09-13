@@ -1,16 +1,14 @@
 # Pulse for Windows
 
-A native Windows port of [Pulse](../README.md) — the screen-edge monitor for
-your AI coding allowances — written in Rust against the Win32 / Direct2D
+A native Windows application for [Pulse](../README.md) — the screen-edge monitor
+for your AI coding allowances — written in Rust against the Win32 / Direct2D
 APIs, styled after WinUI. A Mica dock floats beside a screen edge; each
 accent-coloured ring is a limit (the providers' own Lobe icons in the
 middle), hover for the detail card, and everything refreshes on an adaptive
 ladder so your status line and the panel agree.
 
-This is a **port, not a reimplementation of the data rules**: the reading,
-caching, alerting and reporting logic follows the Swift original in
-[`Sources/Pulse`](../Sources/Pulse) — including its central promise that
-**Pulse does not invent percentages**. Where a provider says how much of an
+The reading, caching, alerting and reporting logic lives in `pulse-core` and
+follows the central promise that **Pulse does not invent percentages**. Where a provider says how much of an
 allowance is left but never how large it is, the denominator is either
 inferred (and labelled `estimated`) or the ring is not drawn at all.
 
@@ -23,7 +21,7 @@ and uploads `pulse.exe` as an artifact on every push.
 ```bash
 cd windows
 cargo build --release        # target/release/pulse.exe
-cargo test                   # 41 tests ported from the macOS suite
+cargo test                   # core and application tests
 ```
 
 ## Run
@@ -48,11 +46,10 @@ pulse.exe --json | jq -r '.accounts[] | "\(.name) \(.headline.usedPercent // "�
 
 ## What is ported
 
-Reading logic, window selection, caching and reporting are ported for 14 of
-the 17 providers; the ring, card, berth and settings UI are complete. The
-three gaps below are routes the macOS app reaches through machinery this
-port does not have yet, listed in Settings with the reason rather than shown
-as broken.
+Reading logic, window selection, caching and reporting are implemented for 14
+of the 17 providers; the ring, card, berth and settings UI are complete. The
+three gaps below depend on mechanisms that are not implemented yet, and are
+listed in Settings with the reason rather than shown as broken.
 
 | Provider | Route | Status |
 | --- | --- | --- |
@@ -93,8 +90,8 @@ Two crates:
   Reactor](https://github.com/microsoft/windows-rs) (a
   `windows-reactor` component served on the main thread), while the panel,
   tray and notifications are classic Win32 on a worker thread. Provider
-  marks are the macOS app's Lobe SVG set, rasterised once to transparent
-  PNGs and tinted at load into the theme's ink. Motion is the macOS app's:
+  marks are Lobe-derived assets, rasterised once to transparent PNGs and
+  tinted at load into the theme's ink. Motion uses damped springs:
   the arrival, the hover halo, the arcs and the card's slide between rings
   are all damped springs — SwiftUI's `.spring(response:…)`,
   `dampingFraction:…)` integrated in fixed steps. Windows only.
@@ -109,8 +106,8 @@ under the current user, so they do not survive `roaming` to another machine
 
 ## Keeping the port honest
 
-The tests in `pulse-core/tests/ported.rs` are the macOS suite's rules,
-restated: the percent display rule (nothing used reads 0%, not quite full
+The tests in `pulse-core/tests/ported.rs` cover the percent display rule
+(nothing used reads 0%, not quite full
 never reads 100%, and a countdown gets the same rule at both ends), which
 limit the second ring picks (fullest of the rest, inside the reading's own
 scope group), the GLM Coding Plan refusals (every one of them an HTTP 200,
