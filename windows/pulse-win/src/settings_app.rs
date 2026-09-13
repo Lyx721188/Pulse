@@ -137,6 +137,25 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// The taskbar and title-bar icon. `AppWindow.SetIcon` wants an .ico file
+/// path, so the icon embedded in the exe is written into the app data
+/// directory once and reused from there. `None` (the write failed) just
+/// means the window keeps the generic icon.
+fn window_icon() -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static ICON: OnceLock<Option<&'static str>> = OnceLock::new();
+    *ICON.get_or_init(|| {
+        let path = pulse_core::data_dir().join("app.ico");
+        if !path.exists() {
+            std::fs::create_dir_all(path.parent()?).ok()?;
+            std::fs::write(&path, include_bytes!("../assets/app.ico")).ok()?;
+        }
+        Some(Box::leak(
+            path.into_os_string().into_string().ok()?.into_boxed_str(),
+        ))
+    })
+}
+
 // --- The component ----------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -370,7 +389,11 @@ impl Component for SettingsApp {
                     ),
                 ),
             ]);
-        context.window_visuals(WindowVisuals::new().backdrop(WindowBackdrop::Mica));
+        let mut visuals = WindowVisuals::new().backdrop(WindowBackdrop::Mica);
+        if let Some(icon) = window_icon() {
+            visuals = visuals.icon(icon);
+        }
+        context.window_visuals(visuals);
         context.window_title("Pulse Settings");
         nav.into()
     }
