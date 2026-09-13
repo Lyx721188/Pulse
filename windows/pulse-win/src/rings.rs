@@ -18,8 +18,9 @@ const BUSY_PERIOD_MS: f64 = 1000.0;
 const REFRESH_SWEEP_DEG: f64 = 0.16 * 360.0;
 const REFRESH_PERIOD_MS: f64 = 850.0;
 
-/// The halo's reach, in design units.
-const HALO_RADIUS: f64 = 14.0;
+/// The halo's reach beyond a ring, in design units. Lives with the panel
+/// now — one glow chases the cursor beneath all the rings.
+pub const HALO_RADIUS: f64 = 14.0;
 
 /// The gap between the progress ring and the mark it encircles, and the
 /// mark's share of the middle.
@@ -115,18 +116,8 @@ pub fn draw_ring(
 
     let arc_color = panel::accent();
 
-    // The pointed-at halo: a soft disc beneath everything, in the accent —
-    // the Win11 clock's "selected" treatment, a glow rather than a stroke.
-    if model.halo > 0.0 {
-        painter.draw_halo(
-            center,
-            radius + HALO_RADIUS as f32 * scale as f32,
-            arc_color.with_alpha(model.halo as f32),
-        )?;
-    }
-
-    // Track. The pointed-at ring's track brightens with the halo, so the
-    // whole ring wakes up — arc, track and glow together.
+    // Track. The ring's track brightens with its emphasis, so a ring near
+    // the pointer wakes up — arc, track and glow together, in proportion.
     let track = circle_geometry(painter.engine, center, radius)?;
     let track_color = {
         let base = panel::palette().track;

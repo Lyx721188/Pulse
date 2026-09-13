@@ -27,7 +27,7 @@ use crate::card::{body_size as card_body_size, CardData};
 use crate::d2d::{global_engine, Painter, SwapchainCanvas};
 use crate::flyout::Flyout;
 use crate::geometry::{self, card, dock, Edge, Metrics};
-use crate::rings::{draw_ring, ring_center, RingModel};
+use crate::rings::{draw_ring, ring_center, RingModel, HALO_RADIUS};
 use crate::theme::panel as theme_panel;
 use crate::winutil;
 
@@ -169,10 +169,21 @@ pub struct PanelWindow {
     /// the macOS app's `.spring(response: 0.32, dampingFraction: 0.86)`.
     presence: f64,
     presence_v: f64,
-    /// The hover halo's spring, riding the same family of curves as the
-    /// panel's selection spring on the macOS side.
-    hover_spring: f64,
-    hover_v: f64,
+    /// Per-ring emphasis, keyed by account: how close the pointer is to
+    /// that ring, 0..1, each on its own spring. Proximity is a continuum,
+    /// not a which-slot pick — a ring partly near the pointer partly
+    /// wakes, and moving the pointer pours the emphasis from one ring
+    /// into the next.
+    emphasis: HashMap<String, (f64, f64)>,
+    /// The emphasis weights the last pointer position called for, aligned
+    /// with `entries`.
+    emphasis_target: Vec<f64>,
+    /// Where the pointer last was, in units — what the glow chases.
+    cursor: (f64, f64),
+    /// The accent glow's own position and velocity, spring-chasing the
+    /// cursor so a flick of the wrist leaves the light trailing a beat.
+    halo_pos: (f64, f64),
+    halo_v: (f64, f64),
     /// The arcs' springs, per account: the displayed fraction trails the
     /// reading the way the macOS ring's arc animates
     /// (`.spring(response: 0.5, dampingFraction: 0.85)`), so a refreshed
@@ -238,8 +249,11 @@ impl PanelWindow {
             docked: true,
             presence: 0.0,
             presence_v: 0.0,
-            hover_spring: 0.0,
-            hover_v: 0.0,
+            emphasis: HashMap::new(),
+            emphasis_target: Vec::new(),
+            cursor: (0.0, 0.0),
+            halo_pos: (0.0, 0.0),
+            halo_v: (0.0, 0.0),
             arc_springs: HashMap::new(),
             hover_slot: None,
             card_slot: None,
@@ -509,7 +523,17 @@ impl PanelWindow {
                 (id, seed)
             })
             .collect();
+        let old = std::mem::take(&mut self.emphasis);
+        self.emphasis = entries
+            .iter()
+            .map(|e| {
+                let id = e.account.id();
+                let seed = old.get(&id).copied().unwrap_or((0.0, 0.0));
+                (id, seed)
+            })
+            .collect();
         self.entries = entries;
+        self.emphasis_target = self.emphasis_weights();
         if count_changed {
             self.compute_window_size();
             self.place();
@@ -553,15 +577,27 @@ impl PanelWindow {
         // The rail is the window: Mica behind it all, ink only here.
         let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
         // The arrival spring drives both the fade and the ring's size, so
-        // the overshoot reads as a bounce, not as a flicker. The hover
-        // spring is the focus gesture — and it belongs to the **pointed-at
-        // ring alone**: halo, track brightness and a step of growth, all
-        // riding one spring.
+        // the overshoot reads as a bounce, not as a flicker. Each ring's
+        // own emphasis spring is the focus gesture — halo brightness in
+        // the track, a step of growth — and how much of it a ring gets is
+        // a smooth function of where the pointer is, so the focus flows
+        // across the rail instead of switching.
         let arrive = self.presence.clamp(0.0, 1.0);
         let ring_scale = 0.55 + 0.45 * self.presence;
-        let halo = self.hover_spring;
-        let focus_grow = 1.0 + 0.1 * halo;
         if arrive > 0.0 && count > 0 {
+            // One glow beneath it all, riding the pointer: the accent disc
+            // chasing the cursor on its own spring, so it reads as the
+            // pointer's own light rather than a property of one ring.
+            let glow = self.max_emphasis();
+            if glow > 0.004 {
+                let radius = (self.m.s(dock::RING_DIAMETER) / 2.0 * ring_scale
+                    + HALO_RADIUS * self.m.scale) as f32;
+                let _ = painter.draw_halo(
+                    crate::d2d::point(self.halo_pos.0 as f32, self.halo_pos.1 as f32),
+                    radius,
+                    theme_panel::accent().with_alpha(glow as f32),
+                );
+            }
             let label_shows = if self.edge.is_vertical() {
                 self.m.side_percentages
             } else {
@@ -569,16 +605,18 @@ impl PanelWindow {
             };
             let ink = theme_panel::palette().text_primary;
             for (index, entry) in self.entries.iter().enumerate() {
-                let is_hover = self.hover_slot == Some(index);
+                let wake = self
+                    .emphasis
+                    .get(&entry.account.id())
+                    .map(|s| s.0)
+                    .unwrap_or(0.0);
                 let mut model = entry.ring.clone();
-                model.halo = if is_hover { halo } else { 0.0 };
+                model.halo = wake;
                 let center = ring_center(&self.m, index, rail, self.edge);
                 let _ = draw_ring(
                     &painter,
                     center,
-                    self.m.s(dock::RING_DIAMETER)
-                        * ring_scale
-                        * if is_hover { focus_grow } else { 1.0 },
+                    self.m.s(dock::RING_DIAMETER) * ring_scale * (1.0 + 0.1 * wake),
                     self.m.s(dock::RING_LINE_WIDTH),
                     self.m.scale,
                     &model,
@@ -734,7 +772,39 @@ impl PanelWindow {
         }
         self.card_slot = None;
         self.hover_slot = None;
+        self.emphasis_target.clear();
         self.card_target = None;
+    }
+
+    /// The emphasis weights the pointer's position calls for, one per
+    /// entry: a smoothstep of the distance from the cursor to each ring's
+    /// centre, with a reach of about one ring pitch — so a ring at the
+    /// pointer is fully woken, the neighbours a half-step away share the
+    /// emphasis, and the value falls to nothing within a pitch and a bit.
+    fn emphasis_weights(&self) -> Vec<f64> {
+        let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
+        let pitch = geometry::dock::ring_step(&self.m, self.edge.axis());
+        let reach = (pitch * 1.05).max(1.0);
+        self.entries
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let c = ring_center(&self.m, i, rail, self.edge);
+                let dx = self.cursor.0 - c.X as f64;
+                let dy = self.cursor.1 - c.Y as f64;
+                let t = (1.0 - (dx * dx + dy * dy).sqrt() / reach).clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            })
+            .collect()
+    }
+
+    /// The strongest ring's emphasis — the glow's own brightness.
+    fn max_emphasis(&self) -> f64 {
+        self.entries
+            .iter()
+            .filter_map(|e| self.emphasis.get(&e.account.id()))
+            .map(|s| s.0)
+            .fold(0.0, f64::max)
     }
 
     /// The animation tick: steps the springs (arrival, hover halo, arcs)
@@ -754,13 +824,29 @@ impl PanelWindow {
             0.86,
             dt,
         );
-        let hover_target = if self.hover_slot.is_some() { 1.0 } else { 0.0 };
+        for (i, entry) in self.entries.iter().enumerate() {
+            let Some(s) = self.emphasis.get_mut(&entry.account.id()) else {
+                continue;
+            };
+            let target = self.emphasis_target.get(i).copied().unwrap_or(0.0);
+            spring_step(&mut s.0, &mut s.1, target, 0.34, 0.82, dt);
+        }
+        // The glow chases the pointer on a slightly lighter spring, so a
+        // fast flick drags the light along for a beat before it catches up.
         spring_step(
-            &mut self.hover_spring,
-            &mut self.hover_v,
-            hover_target,
-            0.34,
-            0.82,
+            &mut self.halo_pos.0,
+            &mut self.halo_v.0,
+            self.cursor.0,
+            0.3,
+            0.8,
+            dt,
+        );
+        spring_step(
+            &mut self.halo_pos.1,
+            &mut self.halo_v.1,
+            self.cursor.1,
+            0.3,
+            0.8,
             dt,
         );
         for entry in &self.entries {
@@ -793,17 +879,27 @@ impl PanelWindow {
             }
         }
 
-        let moving = !(settled(self.presence, self.presence_v, 1.0)
-            && settled(self.hover_spring, self.hover_v, hover_target))
-            || self.entries.iter().any(|e| {
-                let Some(s) = self.arc_springs.get(&e.account.id()) else {
-                    return false;
-                };
-                e.ring.used_fraction.is_some_and(|t| !settled(s.0, s.1, t))
-                    || e.ring
-                        .second_fraction
-                        .is_some_and(|t| !settled(s.2, s.3, t))
-            });
+        let emphasis_moving = self.entries.iter().enumerate().any(|(i, e)| {
+            let target = self.emphasis_target.get(i).copied().unwrap_or(0.0);
+            self.emphasis
+                .get(&e.account.id())
+                .is_some_and(|s| !settled(s.0, s.1, target))
+        });
+        let glow = self.max_emphasis();
+        let glow_moving = glow > 0.004
+            && (!settled(self.halo_pos.0, self.halo_v.0, self.cursor.0)
+                || !settled(self.halo_pos.1, self.halo_v.1, self.cursor.1));
+        let moving =
+            !(settled(self.presence, self.presence_v, 1.0) && !emphasis_moving && !glow_moving)
+                || self.entries.iter().any(|e| {
+                    let Some(s) = self.arc_springs.get(&e.account.id()) else {
+                        return false;
+                    };
+                    e.ring.used_fraction.is_some_and(|t| !settled(s.0, s.1, t))
+                        || e.ring
+                            .second_fraction
+                            .is_some_and(|t| !settled(s.2, s.3, t))
+                });
         let mut moving = moving;
 
         // The card's slide toward its ring.
@@ -915,6 +1011,15 @@ impl PanelWindow {
         self.hide_at = None;
 
         let (ux, uy) = (x as f64 / self.dpi, y as f64 / self.dpi);
+        // A glow that has faded out has no position worth keeping: teleport
+        // it to the returning pointer so it doesn't glide in from the last
+        // place the pointer died.
+        if self.emphasis.values().all(|s| s.0 < 0.02) {
+            self.halo_pos = (ux, uy);
+            self.halo_v = (0.0, 0.0);
+        }
+        self.cursor = (ux, uy);
+        self.emphasis_target = self.emphasis_weights();
         let count = self.entries.len();
         let rail = (0.0, 0.0, self.window_units.0, self.window_units.1);
         let along = match self.edge {
@@ -939,6 +1044,12 @@ impl PanelWindow {
         self.tracking_mouse = false;
         if self.drag.is_some() {
             return;
+        }
+        // The rings relax right away — the pointer is gone. The card alone
+        // lingers, waiting to see whether the pointer is headed its way;
+        // while it is open the ring under it stays woken.
+        if !self.card_shown() {
+            self.emphasis_target.clear();
         }
         // Not immediate: the pointer may be on its way to the card.
         self.leave_at = Some(pulse_core::timeutil::now_ms() + CARD_LINGER_MS);
